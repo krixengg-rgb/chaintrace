@@ -1,0 +1,101 @@
+from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import chains, labels, os, trace
+app = FastAPI(title="ChainTrace")
+# ---- auth + rate limiting (public exposure) ----
+import secrets, base64, time as _t, collections
+from fastapi import Request
+from fastapi.responses import JSONResponse, Response
+_env = {}
+_envf = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(_envf):   # local dev fallback; on Render use env vars
+    for _l in open(_envf):
+        if "=" in _l: k, v = _l.strip().split("=", 1); _env[k] = v
+USER = os.environ.get("CHAINTRACE_USER") or _env.get("CHAINTRACE_USER") or _env.get("CT_USER")
+PASS = os.environ.get("CHAINTRACE_PASSWORD") or _env.get("CHAINTRACE_PASSWORD") or _env.get("CT_PASS")
+if not USER or not PASS or len(PASS) < 12:
+    raise SystemExit("Set CHAINTRACE_USER and CHAINTRACE_PASSWORD (>=12 chars); refusing to start without auth")
+RL = collections.defaultdict(collections.deque)   # ip -> request timestamps
+LIMITS = {"api": (60, 60), "trace": (6, 60)}         # (requests, seconds)
+def _ip(r):
+    xff = r.headers.get("x-forwarded-for")   # Render's proxy appends the client IP; first entry is the client
+    return (xff.split(",")[0].strip() if xff else None) or r.headers.get("cf-connecting-ip") or (r.client.host if r.client else "?")
+@app.middleware("http")
+async def guard(request: Request, call_next):
+    h = request.headers.get("authorization", "")
+    ok = False
+    if h.startswith("Basic "):
+        try:
+            u, _, p = base64.b64decode(h[6:]).decode().partition(":")
+            ok = secrets.compare_digest(u, USER) & secrets.compare_digest(p, PASS)
+        except Exception: ok = False
+    if request.url.path == "/healthz": return await call_next(request)
+    if not ok:
+        return Response("Authentication required", 401, {"WWW-Authenticate": 'Basic realm="ChainTrace"'})
+    path = request.url.path
+    if path.startswith("/api/"):
+        kind = "trace" if (path == "/api/trace" and request.method == "POST") else "api"
+        n, win = LIMITS[kind]; q = RL[(_ip(request), kind)]; now = _t.time()
+        while q and q[0] < now - win: q.popleft()
+        if len(q) >= n: return JSONResponse({"detail": f"rate limit: max {n} {kind} requests per {win}s"}, 429, {"Retry-After": str(win)})
+        q.append(now)
+    return await call_next(request)
+MAX_RUNNING_TRACES = 2
+H = os.path.dirname(__file__)
+def finish(d):
+    by = {n["id"]: n for n in d["nodes"]}
+    focus = d.get("address")
+    if focus and focus in by:
+        nb = [by[x] for e in d["edges"] for x in (e["source"], e["target"]) if x != focus and x in by]
+        d["risk"] = labels.score(by[focus], nb); d["label"] = by[focus]
+    else:
+        nb = [n for n in d["nodes"] if n.get("kind") != "tx"]
+        worst = max(nb, key=lambda n: n["risk"], default=None)
+        d["risk"] = labels.score({"risk":0,"kind":None}, nb) if worst else {"score":0,"level":"low","reasons":[]}
+    for n in d["nodes"]: n["flag"] = n.get("kind") in ("sanctioned", "mixer")
+    return d
+@app.get("/api/lookup")
+async def lookup(q: str, chain: str | None = None, cursor: str | None = None, date_from: int | None = None, date_to: int | None = None):
+    c, kind = chains.detect(q)
+    if chain and c and chain != c and kind == "address": c = chain
+    if not c: raise HTTPException(400, "Unrecognised address / tx hash")
+    try:
+        if kind == "address":
+            d = await chains.ADDR[c](q.strip(), cursor=cursor, f=date_from, to=date_to, pages=6 if (date_from or date_to) else 1)
+        else: d = await chains.TX[c](q.strip())
+    except Exception as e: raise HTTPException(502, f"{c} upstream error: {e}")
+    d["kind"] = kind; return finish(d)
+@app.post("/api/trace")
+async def trace_start(q: str, hops: int = 2, direction: str = "forward", topk: int = 3, max_nodes: int = 120):
+    c, kind = chains.detect(q)
+    if not c: raise HTTPException(400, "Unrecognised address / tx hash")
+    hops = max(1, min(5, hops)); topk = max(1, min(10, topk)); max_nodes = max(10, min(400, max_nodes))
+    if direction not in ("forward", "backward", "both"): raise HTTPException(400, "bad direction")
+    if sum(1 for j in trace.JOBS.values() if j["status"] in ("queued", "running")) >= MAX_RUNNING_TRACES:
+        raise HTTPException(429, "too many traces running, try again shortly")
+    return {"job": trace.start(q.strip(), hops, direction, topk, max_nodes)}
+@app.get("/api/trace/{job}")
+def trace_get(job: str):
+    j = trace.JOBS.get(job)
+    if not j: raise HTTPException(404, "no such job")
+    return j
+@app.get("/healthz")
+def healthz(): return {"ok": True, "labels_db": os.path.exists(labels.LDB)}
+@app.get("/api/cache")
+def cache_stats(): return {**chains.STATS, "rows": chains.DB.execute("select count(*) from cache").fetchone()[0]}
+@app.get("/api/labels")
+def lbl():
+    if not os.path.exists(labels.LDB): return {"by_chain_category": [], "sources": [], "warning": "labels.sqlite missing - run update_labels.py"}
+    import sqlite3; db = sqlite3.connect(f"file:{labels.LDB}?mode=ro", uri=True)
+    return {"by_chain_category": [dict(zip(("chain","category","addresses"), r)) for r in db.execute("select chain,category,count(distinct address) from labels group by 1,2 order by 1,3 desc")],
+            "sources": [dict(zip(("id","description","url","licence","included","rows"), r)) for r in db.execute("select * from sources")]}
+def _old_lbl(): return {"ofac_counts": {k: len(v) for k, v in labels.OFAC.items()}, "mixers": len(labels.MIXERS_ETH),
+                   "exchanges": {k: len(v) for k, v in labels.EXCH.items()}}
+app.mount("/static", StaticFiles(directory=os.path.join(H, "static")), name="static")
+@app.get("/")
+def index(): return FileResponse(os.path.join(H, "static", "index.html"))
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0" if os.environ.get("PORT") else "127.0.0.1", port=int(os.environ.get("PORT", 8090)))

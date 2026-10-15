@@ -1,0 +1,14 @@
+.env
+*.env
+cache.sqlite*
+*.sqlite-wal
+*.sqlite-shm
+data/labels.sqlite
+data/labels.sqlite.tmp
+data/src/
+__pycache__/
+.venv/
+*.log
+tunnel_url.txt
+screenshot*.png
+chains_v1.py

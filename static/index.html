@@ -1,0 +1,97 @@
+<!doctype html><html><head><meta charset="utf-8"><title>ChainTrace</title>
+<script src="/static/cytoscape.min.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;font:14px system-ui,sans-serif;background:#0f1420;color:#dde3ee;display:flex;flex-direction:column;height:100vh}
+header{padding:10px 16px;background:#161d2e;display:flex;gap:10px;align-items:center;border-bottom:1px solid #263049}
+header b{font-size:18px;color:#6cb6ff}input{flex:1;padding:8px;background:#0f1420;border:1px solid #33405e;color:#fff;border-radius:6px;font-family:monospace}
+button{padding:8px 14px;background:#2f6feb;border:0;color:#fff;border-radius:6px;cursor:pointer}button.s{background:#263049}
+main{flex:1;display:flex;min-height:0}#cy{flex:1;background:#0b0f18}aside{width:430px;overflow:auto;padding:12px;border-left:1px solid #263049}
+.card{background:#161d2e;border-radius:8px;padding:10px;margin-bottom:10px}.mono{font-family:monospace;word-break:break-all;font-size:12px}
+.risk{font-size:22px;font-weight:bold}.low{color:#3fb950}.medium{color:#d29922}.high{color:#f0883e}.severe{color:#f85149}
+.tag{display:inline-block;padding:1px 6px;margin:2px;border-radius:10px;background:#263049;font-size:11px}.tag.sanctioned{background:#8b1d1d}.tag.mixer{background:#7a3c00}.tag.exchange{background:#1d4f8b}.tag.scam,.tag.hack,.tag.darknet,.tag.ransomware,.tag.terrorism{background:#8b1d1d}.tag.gambling,.tag.blocklisted{background:#6b5200}.tag.defi{background:#1f5f2a}.tag.bridge{background:#14595e}.tag.miner{background:#4b2d86}
+table{width:100%;border-collapse:collapse;font-size:12px}td{padding:3px;border-bottom:1px solid #222b40}.pos{color:#3fb950}.neg{color:#f85149}
+#legend span{margin-right:10px;font-size:12px}#status{font-size:12px;color:#8b949e}
+</style></head><body>
+<header><b>⛓ ChainTrace</b><input id="q" placeholder="BTC / ETH / SOL address or tx hash"><button onclick="go()">Trace</button>
+<span style="font-size:12px">Hops <select id="hops"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select>
+<select id="dir"><option>forward</option><option>backward</option><option>both</option></select> top‑K <select id="topk"><option>2</option><option selected>3</option><option>5</option><option>8</option></select></span>
+<button id="tracebtn" onclick="traceN()">Trace N hops</button>
+<span style="font-size:12px">From <input type="date" id="df" style="flex:none;width:130px;padding:4px"> To <input type="date" id="dt" style="flex:none;width:130px;padding:4px"></span>
+<button class="s" onclick="cy.layout(lay()).run()">Re-layout</button><span id="status"></span></header>
+<main><div id="cy"></div><aside><div id="legend" class="card">
+<span style="color:#f85149">● sanctioned/terror</span><span style="color:#da3633">● darknet/ransomware</span><span style="color:#ff7b72">● scam/hack</span><span style="color:#f0883e">● mixer</span><span style="color:#e3b341">● gambling/blocklisted</span><span style="color:#4c8dff">● exchange</span><span style="color:#39c5cf">● bridge</span><span style="color:#3fb950">● DeFi</span><span style="color:#8957e5">● miner</span><span style="color:#9aa">● unknown</span><span style="color:#d2a8ff">■ tx</span><br>
+<small>Click a node to see details; double‑click (or "Expand") to pull its hops in/out into the graph.</small></div>
+<div id="side"></div><div id="det"></div></aside></main>
+<script>
+const col={sanctioned:'#f85149',terrorism:'#f85149',darknet:'#da3633',ransomware:'#da3633',hack:'#e5534b',scam:'#ff7b72',mixer:'#f0883e',blocklisted:'#d29922',gambling:'#e3b341',exchange:'#4c8dff',bridge:'#39c5cf',defi:'#3fb950',miner:'#8957e5',tx:'#d2a8ff'};
+const HIGH=['sanctioned','terrorism','darknet','ransomware','hack','scam','mixer','blocklisted','gambling'];
+const cy=cytoscape({container:document.getElementById('cy'),wheelSensitivity:.2,style:[
+{selector:'node',style:{'background-color':e=>col[e.data('kind')]||'#7d8590','label':'data(lbl)','color':'#cfd6e4','font-size':9,'text-valign':'bottom','text-margin-y':3,width:e=>e.data('focus')?34:20,height:e=>e.data('focus')?34:20,'border-width':e=>e.data('focus')?3:0,'border-color':'#fff'}},
+{selector:'node[kind="tx"]',style:{shape:'round-rectangle'}},
+{selector:'edge',style:{width:1.5,'line-color':'#3d4b6b','target-arrow-color':'#3d4b6b','target-arrow-shape':'triangle','curve-style':'bezier','label':'data(lbl)','font-size':7,color:'#8b949e','text-rotation':'autorotate'}},
+{selector:'edge.hot',style:{width:3.5,'line-color':'#ff5d5d','target-arrow-color':'#ff5d5d',color:'#ffb3b3','z-index':9}},
+{selector:'edge.hotx',style:{width:3,'line-color':'#4c8dff','target-arrow-color':'#4c8dff','z-index':8}},
+{selector:'node.hot',style:{'border-width':3,'border-color':'#ff5d5d'}},
+{selector:':selected',style:{'border-width':3,'border-color':'#ffd33d'}}]});
+const lay=()=>({name:'cose',animate:false,nodeRepulsion:9000,idealEdgeLength:110});
+const short=a=>a.startsWith('tx:')?a.slice(0,13)+'…':a.slice(0,6)+'…'+a.slice(-4);
+const fmt=n=>(+n).toLocaleString(undefined,{maximumFractionDigits:6});
+let chainOf={}, expanded=new Set();
+const dts=()=>{const f=document.getElementById('df').value,t=document.getElementById('dt').value;let s='';
+ if(f)s+='&date_from='+Math.floor(Date.parse(f)/1000);if(t)s+='&date_to='+(Math.floor(Date.parse(t)/1000)+86399);return s};
+let cur=null;
+async function api(q,cursor){document.getElementById('status').textContent='loading '+short(q)+'…';
+ const r=await fetch('/api/lookup?q='+encodeURIComponent(q)+dts()+(cursor?'&cursor='+encodeURIComponent(cursor):''));const j=await r.json();document.getElementById('status').textContent=r.ok?'':'error: '+j.detail;if(!r.ok)throw j;return j}
+function add(d,focus){const els=[];
+ for(const n of d.nodes){chainOf[n.id]=n.chain;const ex=cy.getElementById(n.id);
+  if(ex.length){if(n.kind)ex.data('kind',n.kind);continue}
+  els.push({group:'nodes',data:{id:n.id,lbl:n.name||short(n.id),kind:n.kind,info:n,focus:n.id===focus}})}
+ for(const e of d.edges){const id=e.source+'>'+e.target+(e.unit||'');if(cy.getElementById(id).length)continue;
+  els.push({group:'edges',data:{id,source:e.source,target:e.target,lbl:fmt(e.amount)+' '+(e.unit||d.unit)+(e.count>1?' ×'+e.count:''),info:e}})}
+ cy.add(els);cy.layout(lay()).run()}
+async function go(){const q=document.getElementById('q').value.trim();if(!q)return;cy.elements().remove();expanded.clear();
+ try{const d=await api(q);add(d,d.address||('tx:'+d.tx));expanded.add(d.address);cur=d;render(d)}catch(e){}}
+async function loadMore(){if(!cur||!cur.next)return;const b=document.getElementById('more');if(b)b.textContent='loading…';
+ try{const d=await api(cur.address,cur.next);add(d,null);d.balance=cur.balance;d.tx_count=cur.tx_count;d.tokens=cur.tokens;d.risk=cur.risk;d.label=cur.label;
+ d.txs=cur.txs.concat(d.txs);d.cluster=[...new Set((cur.cluster||[]).concat(d.cluster||[]))];d.kind='address';cur=d;render(d)}catch(e){}}
+let job=null;
+async function traceN(){const q=document.getElementById('q').value.trim();if(!q)return;cy.elements().remove();expanded.clear();
+ const p=`q=${encodeURIComponent(q)}&hops=${hops.value}&direction=${dir.value}&topk=${topk.value}`;
+ const r=await fetch('/api/trace?'+p,{method:'POST'});const j=await r.json();if(!r.ok){document.getElementById('status').textContent='error: '+j.detail;return}
+ job=j.job;tracebtn.disabled=true;poll(job,q)}
+async function poll(id,q){const r=await fetch('/api/trace/'+id);if(id!==job)return;
+ if(!r.ok){document.getElementById('status').textContent=r.status===404?'trace lost (server restarted or slept) - please run it again':'trace poll error '+r.status;tracebtn.disabled=false;return}
+ const j=await r.json();
+ const n0=cy.nodes().length;add({nodes:j.nodes,edges:j.edges,unit:''},j.root);if(cy.nodes().length===n0&&j.status!=='done')0;
+ document.getElementById('status').textContent=`trace ${j.status}: ${j.progress} · ${j.nodes.length} nodes`+(j.capped?' (capped)':'');
+ if(j.status==='running'||j.status==='queued'){setTimeout(()=>poll(id,q),1500);return}
+ tracebtn.disabled=false;window.lastTrace=j;highlight(j);renderTrace(j)}
+function highlight(j){cy.elements().removeClass('hot hotx');for(const p of j.paths){for(const e of p.edges){
+ cy.getElementById(e[0]+'>'+e[1]+(e[2]||'')).addClass(HIGH.includes(p.kind)?'hot':'hotx')}if(HIGH.includes(p.kind))p.nodes.forEach(n=>cy.getElementById(n).addClass('hot'))}}
+function renderTrace(j){const r=j.risk||{};let h=`<div class="card"><b>Multi-hop trace</b> (${j.direction}, ${j.hops} hops) · ${j.nodes.length} nodes · ${j.elapsed}s
+ <div class="mono">${j.q}</div>${j.summary&&j.summary.balance!=null?`<div>Balance: <b>${fmt(j.summary.balance)} ${j.summary.unit}</b></div>`:''}
+ <div class="risk ${r.level}">Risk ${r.score}/100 · ${r.level}</div>${(r.reasons||[]).map(x=>'<div style="font-size:12px">⚠ '+x+'</div>').join('')}
+ ${j.errors.length?'<div style="color:#d29922;font-size:12px">'+j.errors.length+' fetch error(s)</div>':''}</div>
+ <div class="card"><b>Paths to labelled entities (${j.paths.length})</b>`+j.paths.map((p,i)=>`<div style="cursor:pointer;margin:4px 0" onclick="focusPath(${i})"><span class="tag ${p.kind}">${p.kind}</span> ${p.name||short(p.target)} · ${p.hops} hop(s) <span style="color:#8b949e;font-size:11px">src: ${p.sources||'?'}</span></div>`).join('')+'</div>';
+ side.innerHTML=h}
+function focusPath(i){const p=window.lastTrace.paths[i];cy.elements().unselect();const c=cy.collection();p.nodes.forEach(n=>c.merge(cy.getElementById(n)));c.select();cy.fit(c,80)}
+async function expand(id){if(id.startsWith('tx:')||expanded.has(id))return;expanded.add(id);
+ try{const d=await api(id);add(d,null);render(d)}catch(e){}}
+function tags(n){return (n.kind?`<span class="tag ${n.kind}">${n.kind}</span>`:'')+(n.tags||[]).map(t=>`<span class="tag">${t}</span>`).join('')}
+function render(d){const r=d.risk||{};let h=`<div class="card"><div class="mono">${(d.chain||'').toUpperCase()} ${d.kind}: ${d.address||d.tx}</div>
+ <div class="risk ${r.level}">Risk ${r.score}/100 · ${r.level}</div>${(r.reasons||[]).map(x=>'<div>⚠ '+x+'</div>').join('')}
+ ${d.label?'<div>'+(d.label.name||'')+' '+tags(d.label)+'</div>'+((d.label.sources||[]).length?'<div style="font-size:11px;color:#8b949e">sources: '+[...new Set(d.label.sources.map(s=>s.source+' ('+s.licence+')'))].join('; ')+'</div>':''):''}`;
+ if(d.kind==='address'){h+=`<div>Balance: <b>${fmt(d.balance)} ${d.unit}</b> · tx count: ${d.tx_count??'?'}</div>`;
+  if(d.tokens&&d.tokens.length)h+='<div>Tokens: '+d.tokens.map(t=>fmt(t.amount)+' '+(t.symbol||short(t.mint))).join(', ')+'</div>'}
+ else h+=`<div>Fee: ${fmt(d.fee)} ${d.unit} · time: ${d.time?new Date((typeof d.time==='number'?d.time*1000:d.time)).toISOString():'pending'}</div>`;
+ if(d.cluster&&d.cluster.length>1)h+=`<div style="margin-top:6px"><b>Common-input cluster (${d.cluster.length})</b><div class="mono">${d.cluster.slice(0,30).join('<br>')}</div></div>`;
+ h+='</div>';
+ if(d.txs){h+='<div class="card"><b>Recent activity</b><table>'+d.txs.map(t=>`<tr><td class="mono">${short(t.tx||'')}</td><td>${t.time?(typeof t.time==='number'?new Date(t.time*1000):new Date(t.time)).toISOString().slice(0,16).replace('T',' '):''}</td><td class="${t.delta>=0?'pos':'neg'}">${t.delta>=0?'+':''}${fmt(t.delta)} ${t.unit}</td></tr>`).join('')+'</table>'+(d.next?'<button id="more" onclick="loadMore()">Load more</button>':'<div style="font-size:12px;color:#8b949e">end of history (or date range)</div>')+` <span style="font-size:12px">${d.txs.length} loaded</span></div>`}
+ document.getElementById('side').innerHTML=h}
+cy.on('tap','node',e=>{const n=e.target.data('info');document.getElementById('det').innerHTML=`<div class="card"><b>${n.name||'Address'}</b> ${tags(n)}
+ <div class="mono">${n.id}</div>${(n.sources||[]).length?'<div style="font-size:11px;margin-top:4px"><b>Label sources</b>'+n.sources.map(s=>`<div>• ${s.category||''} “${s.name||''}” — ${s.source} (${s.licence}, conf ${s.confidence})</div>`).join('')+'</div>':''}${n.id.startsWith('tx:')?'':`<button onclick="expand('${n.id}')">Expand hops</button> <button class="s" onclick="document.getElementById('q').value='${n.id}';go()">Trace as root</button>`}</div>`});
+cy.on('dbltap','node',e=>expand(e.target.id()));
+cy.on('tap','edge',e=>{const x=e.target.data('info');document.getElementById('det').innerHTML=`<div class="card"><b>Flow</b> ${fmt(x.amount)} ${x.unit||''} (${x.count||1} tx)<div class="mono">${x.source}<br>→ ${x.target}<br>tx: ${x.tx}</div></div>`});
+document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter')go()});
+const p=new URLSearchParams(location.search).get('q');if(p){document.getElementById('q').value=p;go()}
+</script></body></html>
