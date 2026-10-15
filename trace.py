@@ -5,7 +5,10 @@ from labels import EXPO, RISK
 TERMINAL = set(RISK) - {"other"}
 ORDER = sorted(RISK, key=lambda k: -RISK[k])
 def _rank(cands):
-    # unit-agnostic: normalise amounts per unit, add a small bonus for repeated flows
+    # rank by USD value when priced (comparable across currencies); unpriced flows fall back to
+    # per-unit normalised amount and are placed after priced ones of similar weight
+    if any(e.get("usd") for e in cands):
+        return sorted(cands, key=lambda e: -((e.get("usd") or 0) + 0.01 * e.get("count", 1)))
     mx = {}
     for e in cands: mx[e["unit"]] = max(mx.get(e["unit"], 0), e["amount"] or 0)
     return sorted(cands, key=lambda e: -((e["amount"] or 0) / (mx[e["unit"]] or 1) + 0.05 * e.get("count", 1)))
@@ -95,4 +98,14 @@ def start(q, hops=2, direction="forward", topk=3, max_nodes=120):
     _prune(); job = uuid.uuid4().hex[:10]
     JOBS[job] = {"id": job, "q": q, "hops": hops, "direction": direction, "status": "queued", "progress": "", "nodes": [], "edges": [],
                  "paths": [], "errors": [], "started": time.time(), "capped": False}
-    asyncio.create_task(run(job, q, hops, direction, topk, max_nodes)); return job
+    TASKS[job] = asyncio.create_task(_wrap(job, q, hops, direction, topk, max_nodes)); return job
+TASKS = {}
+async def _wrap(job, *a):
+    try: await run(job, *a)
+    except asyncio.CancelledError:
+        JOBS[job].update(status="cancelled", progress="cancelled by user", elapsed=round(time.time() - JOBS[job]["started"], 1))
+    finally: TASKS.pop(job, None)
+def cancel(job):
+    t = TASKS.get(job)
+    if t and not t.done(): t.cancel(); return True
+    return False

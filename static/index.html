@@ -1,97 +1,268 @@
-<!doctype html><html><head><meta charset="utf-8"><title>ChainTrace</title>
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#070a12"><title>ChainTrace · on-chain fund tracing</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='9' cy='16' r='6' fill='none' stroke='%237c5cff' stroke-width='3'/%3E%3Ccircle cx='23' cy='16' r='6' fill='none' stroke='%2322d3ee' stroke-width='3'/%3E%3C/svg%3E">
 <script src="/static/cytoscape.min.js"></script>
 <style>
-*{box-sizing:border-box}body{margin:0;font:14px system-ui,sans-serif;background:#0f1420;color:#dde3ee;display:flex;flex-direction:column;height:100vh}
-header{padding:10px 16px;background:#161d2e;display:flex;gap:10px;align-items:center;border-bottom:1px solid #263049}
-header b{font-size:18px;color:#6cb6ff}input{flex:1;padding:8px;background:#0f1420;border:1px solid #33405e;color:#fff;border-radius:6px;font-family:monospace}
-button{padding:8px 14px;background:#2f6feb;border:0;color:#fff;border-radius:6px;cursor:pointer}button.s{background:#263049}
-main{flex:1;display:flex;min-height:0}#cy{flex:1;background:#0b0f18}aside{width:430px;overflow:auto;padding:12px;border-left:1px solid #263049}
-.card{background:#161d2e;border-radius:8px;padding:10px;margin-bottom:10px}.mono{font-family:monospace;word-break:break-all;font-size:12px}
-.risk{font-size:22px;font-weight:bold}.low{color:#3fb950}.medium{color:#d29922}.high{color:#f0883e}.severe{color:#f85149}
-.tag{display:inline-block;padding:1px 6px;margin:2px;border-radius:10px;background:#263049;font-size:11px}.tag.sanctioned{background:#8b1d1d}.tag.mixer{background:#7a3c00}.tag.exchange{background:#1d4f8b}.tag.scam,.tag.hack,.tag.darknet,.tag.ransomware,.tag.terrorism{background:#8b1d1d}.tag.gambling,.tag.blocklisted{background:#6b5200}.tag.defi{background:#1f5f2a}.tag.bridge{background:#14595e}.tag.miner{background:#4b2d86}
-table{width:100%;border-collapse:collapse;font-size:12px}td{padding:3px;border-bottom:1px solid #222b40}.pos{color:#3fb950}.neg{color:#f85149}
-#legend span{margin-right:10px;font-size:12px}#status{font-size:12px;color:#8b949e}
+:root{--bg:#070a12;--panel:rgba(20,26,42,.62);--panel2:rgba(28,36,58,.55);--line:rgba(140,160,210,.14);--txt:#e6ebf5;--mut:#8a95ad;--acc:#7c5cff;--acc2:#22d3ee;
+--btc:#f7931a;--eth:#8c9eff;--sol:#14f195;--red:#ff4d6d;--org:#ff9f43;--yel:#f6c945;--grn:#2ee59d;--blu:#4c8dff;
+--font:ui-sans-serif,-apple-system,"Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif;--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;font:14px/1.45 var(--font);color:var(--txt);background:var(--bg);display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased}
+body:before{content:"";position:fixed;inset:-20%;z-index:-1;background:radial-gradient(40% 35% at 15% 10%,rgba(124,92,255,.22),transparent 70%),radial-gradient(35% 30% at 85% 15%,rgba(34,211,238,.14),transparent 70%),radial-gradient(40% 40% at 60% 100%,rgba(20,241,149,.08),transparent 70%)}
+button,input,select{font:inherit;color:inherit}
+.glass{background:var(--panel);border:1px solid var(--line);border-radius:16px;backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);box-shadow:0 10px 40px rgba(0,0,0,.35)}
+header{display:flex;align-items:center;gap:14px;padding:12px 16px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:17px;letter-spacing:.2px;white-space:nowrap}
+.brand i{width:28px;height:28px;border-radius:9px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:grid;place-items:center;font-style:normal;font-size:15px;box-shadow:0 0 22px rgba(124,92,255,.55)}
+.brand small{color:var(--mut);font-weight:500;font-size:12px}
+.search{flex:1;min-width:280px;display:flex;align-items:center;gap:8px;padding:6px 6px 6px 14px;border-radius:14px}
+.search input{flex:1;min-width:0;background:none;border:0;outline:0;font-family:var(--mono);font-size:13.5px;padding:8px 0}
+.search input::placeholder{color:#5e6882;font-family:var(--font)}
+.badge{font-size:11px;font-weight:700;letter-spacing:.6px;padding:4px 9px;border-radius:999px;border:1px solid var(--line);color:var(--mut);white-space:nowrap;transition:.2s}
+.badge.btc{color:var(--btc);border-color:rgba(247,147,26,.5);background:rgba(247,147,26,.1)}
+.badge.eth{color:var(--eth);border-color:rgba(140,158,255,.5);background:rgba(140,158,255,.1)}
+.badge.sol{color:var(--sol);border-color:rgba(20,241,149,.45);background:rgba(20,241,149,.08)}
+.btn{border:1px solid var(--line);background:var(--panel2);padding:8px 13px;border-radius:11px;cursor:pointer;transition:.15s;white-space:nowrap}
+.btn:hover{border-color:rgba(124,92,255,.6);background:rgba(124,92,255,.15)}.btn:disabled{opacity:.45;cursor:default}
+.btn.pri{background:linear-gradient(135deg,var(--acc),#5b8cff);border:0;font-weight:600;box-shadow:0 4px 18px rgba(124,92,255,.4)}
+.btn.pri:hover{filter:brightness(1.1)}.btn.sm{padding:5px 9px;font-size:12px;border-radius:9px}.btn.ico{padding:7px 10px}
+.btn.danger{border-color:rgba(255,77,109,.5);color:#ffb3c1}
+.controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:0 16px 10px}
+.seg{display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:12px;font-size:12px;color:var(--mut)}
+.seg select,.seg input{background:rgba(0,0,0,.25);border:1px solid var(--line);border-radius:8px;padding:5px 6px;color:var(--txt);outline:0}
+.seg input[type=date]{color-scheme:dark;width:132px}
+#status{font-size:12px;color:var(--mut);display:flex;align-items:center;gap:8px;min-height:20px}
+.spin{width:14px;height:14px;border-radius:50%;border:2px solid rgba(124,92,255,.25);border-top-color:var(--acc);animation:sp .8s linear infinite;display:none}
+.busy .spin{display:inline-block}@keyframes sp{to{transform:rotate(360deg)}}
+main{flex:1;display:flex;gap:12px;padding:0 12px 12px;min-height:0}
+#gwrap{flex:1;position:relative;min-width:0;overflow:hidden}
+#cy{position:absolute;inset:0}
+.gtools{position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:6px;z-index:5}
+.gtools .btn{width:36px;height:36px;padding:0;display:grid;place-items:center;font-size:15px;background:rgba(14,19,32,.75)}
+.legend{position:absolute;left:10px;bottom:10px;z-index:5;padding:8px 10px;font-size:11px;color:var(--mut);display:flex;flex-wrap:wrap;gap:4px 10px;max-width:calc(100% - 80px);border-radius:12px}
+.legend span{display:inline-flex;align-items:center;gap:5px}.legend b{width:9px;height:9px;border-radius:50%;display:inline-block}
+.prog{position:absolute;left:0;right:0;top:0;height:2px;overflow:hidden;z-index:6;opacity:0;transition:.3s}.busy .prog{opacity:1}
+.prog:after{content:"";position:absolute;inset:0;width:40%;background:linear-gradient(90deg,transparent,var(--acc2),var(--acc),transparent);animation:pg 1.1s ease-in-out infinite}
+@keyframes pg{from{transform:translateX(-100%)}to{transform:translateX(260%)}}
+.empty{position:absolute;inset:0;display:grid;place-items:center;text-align:center;color:var(--mut);pointer-events:none;padding:20px}
+.empty h2{color:var(--txt);font-weight:650;margin:0 0 6px;font-size:22px}.empty .ex{pointer-events:auto;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:14px}
+aside{width:420px;flex:none;overflow:auto;display:flex;flex-direction:column;gap:12px;padding-right:2px}
+aside::-webkit-scrollbar{width:6px}aside::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:6px}
+.card{padding:14px 15px}.card h3{margin:0 0 10px;font-size:12px;letter-spacing:.8px;text-transform:uppercase;color:var(--mut);font-weight:650;display:flex;align-items:center;gap:8px}
+.card h3 .sp{flex:1}
+.mono{font-family:var(--mono);font-size:12px;word-break:break-all}
+.addr{display:flex;align-items:center;gap:6px}.addr .mono{flex:1}
+.copy{cursor:pointer;opacity:.6;border:0;background:none;padding:2px 4px;font-size:13px}.copy:hover{opacity:1}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px;margin-top:10px}.kv div:nth-child(odd){color:var(--mut)}
+.big{font-size:22px;font-weight:700;letter-spacing:-.3px}.usd{color:var(--mut);font-size:13px;font-weight:500}
+.riskrow{display:flex;gap:14px;align-items:center}
+.gauge{width:118px;flex:none}.gauge text{font-family:var(--font)}
+.reasons{font-size:12.5px;display:flex;flex-direction:column;gap:5px}
+.reasons div{padding:6px 8px;border-radius:9px;background:rgba(255,255,255,.035);border:1px solid var(--line)}
+.tag{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;margin:2px 3px 2px 0;border-radius:999px;font-size:11px;font-weight:600;background:rgba(255,255,255,.07);border:1px solid var(--line)}
+.lvl{font-weight:700;text-transform:uppercase;letter-spacing:.6px;font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}td{padding:7px 4px;border-bottom:1px solid var(--line);vertical-align:middle}
+tr:hover td{background:rgba(255,255,255,.025)}td.r{text-align:right;white-space:nowrap}
+.pos{color:var(--grn)}.neg{color:var(--red)}.dim{color:var(--mut)}
+a{color:#9fb4ff;text-decoration:none}a:hover{text-decoration:underline}
+.path{display:flex;align-items:center;gap:8px;padding:8px;border-radius:10px;cursor:pointer;border:1px solid transparent}
+.path:hover{border-color:var(--line);background:rgba(255,255,255,.03)}
+.sk{border-radius:8px;background:linear-gradient(90deg,rgba(255,255,255,.05),rgba(255,255,255,.12),rgba(255,255,255,.05));background-size:200% 100%;animation:sk 1.2s infinite;height:14px;margin:8px 0}
+@keyframes sk{from{background-position:200% 0}to{background-position:-200% 0}}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(30px);opacity:0;transition:.25s;padding:9px 14px;border-radius:12px;z-index:50;font-size:13px}
+.toast.on{opacity:1;transform:translateX(-50%)}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.menu{position:relative}.menu .dd{position:absolute;right:0;top:110%;display:none;flex-direction:column;gap:4px;padding:6px;z-index:20;min-width:150px}
+.menu.open .dd{display:flex}.dd .btn{text-align:left}
+@media (max-width:900px){
+ body{overflow:auto;height:auto;min-height:100%}
+ header{padding:10px}.brand small{display:none}.search{min-width:100%;order:3}
+ .controls{padding:0 10px 8px;gap:6px}.seg{padding:3px 6px}
+ main{flex-direction:column;padding:0 8px 10px}
+ #gwrap{flex:none;height:58vh;min-height:340px}
+ aside{width:auto;overflow:visible}
+ .legend{display:none}
+}
 </style></head><body>
-<header><b>⛓ ChainTrace</b><input id="q" placeholder="BTC / ETH / SOL address or tx hash"><button onclick="go()">Trace</button>
-<span style="font-size:12px">Hops <select id="hops"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select>
-<select id="dir"><option>forward</option><option>backward</option><option>both</option></select> top‑K <select id="topk"><option>2</option><option selected>3</option><option>5</option><option>8</option></select></span>
-<button id="tracebtn" onclick="traceN()">Trace N hops</button>
-<span style="font-size:12px">From <input type="date" id="df" style="flex:none;width:130px;padding:4px"> To <input type="date" id="dt" style="flex:none;width:130px;padding:4px"></span>
-<button class="s" onclick="cy.layout(lay()).run()">Re-layout</button><span id="status"></span></header>
-<main><div id="cy"></div><aside><div id="legend" class="card">
-<span style="color:#f85149">● sanctioned/terror</span><span style="color:#da3633">● darknet/ransomware</span><span style="color:#ff7b72">● scam/hack</span><span style="color:#f0883e">● mixer</span><span style="color:#e3b341">● gambling/blocklisted</span><span style="color:#4c8dff">● exchange</span><span style="color:#39c5cf">● bridge</span><span style="color:#3fb950">● DeFi</span><span style="color:#8957e5">● miner</span><span style="color:#9aa">● unknown</span><span style="color:#d2a8ff">■ tx</span><br>
-<small>Click a node to see details; double‑click (or "Expand") to pull its hops in/out into the graph.</small></div>
-<div id="side"></div><div id="det"></div></aside></main>
+<header>
+ <div class="brand"><i>⛓</i>ChainTrace <small>BTC · ETH · SOL fund tracing</small></div>
+ <div class="search glass">
+  <span id="chainBadge" class="badge">AUTO</span>
+  <input id="q" autocomplete="off" spellcheck="false" placeholder="Paste a Bitcoin, Ethereum or Solana address / tx hash">
+  <button class="btn pri" id="gobtn" onclick="go()">Trace</button>
+ </div>
+</header>
+<div class="controls">
+ <div class="seg glass">Hops <select id="hops"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select>
+  <select id="dir"><option value="forward">→ forward</option><option value="backward">← backward</option><option value="both">⇄ both</option></select>
+  top-K <select id="topk"><option>2</option><option selected>3</option><option>5</option><option>8</option></select></div>
+ <button class="btn pri" id="tracebtn" onclick="traceN()">Trace N hops</button>
+ <button class="btn danger" id="cancelbtn" onclick="cancelTrace()" style="display:none">Cancel</button>
+ <div class="seg glass">From <input type="date" id="df"> To <input type="date" id="dt"></div>
+ <div class="menu" id="exportMenu"><button class="btn" onclick="exportMenu.classList.toggle('open')">Export ▾</button>
+  <div class="dd glass"><button class="btn sm" onclick="exportPNG()">Graph PNG</button><button class="btn sm" onclick="exportCSV()">Flows CSV</button>
+  <button class="btn sm" onclick="exportJSON()">Full JSON</button><button class="btn sm" onclick="copyLink()">Copy share link</button></div></div>
+ <div id="status"><span class="spin"></span><span id="stxt"></span></div>
+</div>
+<main>
+ <div id="gwrap" class="glass"><div class="prog"></div><div id="cy"></div>
+  <div class="empty" id="empty"><div><h2>Follow the money.</h2>Paste an address or transaction above. Tap a node for details, double-tap to expand its hops.
+   <div class="ex"><button class="btn sm" onclick="demo('0x28C6c06298d514Db089934071355E5743bf21d60')">Ξ Binance 14</button>
+   <button class="btn sm" onclick="demo('bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h')">₿ Binance cold</button>
+   <button class="btn sm" onclick="demo('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM')">◎ Binance SOL</button></div></div></div>
+  <div class="gtools"><button class="btn" title="Fit" onclick="cy.animate({fit:{padding:40}},{duration:350})">⤢</button>
+   <button class="btn" title="Zoom in" onclick="zoomBy(1.3)">+</button><button class="btn" title="Zoom out" onclick="zoomBy(1/1.3)">−</button>
+   <button class="btn" title="Re-layout" onclick="relayout()">⟳</button><button class="btn" title="Clear highlight" onclick="clearHl()">◌</button></div>
+  <div class="legend glass" id="legend"></div>
+ </div>
+ <aside><div id="side"></div><div id="det"></div></aside>
+</main>
+<div class="toast glass" id="toast"></div>
 <script>
-const col={sanctioned:'#f85149',terrorism:'#f85149',darknet:'#da3633',ransomware:'#da3633',hack:'#e5534b',scam:'#ff7b72',mixer:'#f0883e',blocklisted:'#d29922',gambling:'#e3b341',exchange:'#4c8dff',bridge:'#39c5cf',defi:'#3fb950',miner:'#8957e5',tx:'#d2a8ff'};
+// ---------- constants ----------
+const CAT={sanctioned:['#ff4d6d','⊘','Sanctioned'],terrorism:['#ff2e63','☠','Terrorism'],darknet:['#e0115f','☠','Darknet'],ransomware:['#e0115f','🔒','Ransomware'],
+ hack:['#ff6b6b','⚡','Hack'],scam:['#ff7b54','!','Scam'],mixer:['#ff9f43','↻','Mixer'],blocklisted:['#f6c945','⊘','Blocklisted'],gambling:['#f6c945','♠','Gambling'],
+ exchange:['#4c8dff','$','Exchange'],bridge:['#22d3ee','⇄','Bridge'],defi:['#2ee59d','◆','DeFi'],miner:['#a78bfa','⚒','Miner'],tx:['#c084fc','≡','Tx']};
 const HIGH=['sanctioned','terrorism','darknet','ransomware','hack','scam','mixer','blocklisted','gambling'];
-const cy=cytoscape({container:document.getElementById('cy'),wheelSensitivity:.2,style:[
-{selector:'node',style:{'background-color':e=>col[e.data('kind')]||'#7d8590','label':'data(lbl)','color':'#cfd6e4','font-size':9,'text-valign':'bottom','text-margin-y':3,width:e=>e.data('focus')?34:20,height:e=>e.data('focus')?34:20,'border-width':e=>e.data('focus')?3:0,'border-color':'#fff'}},
-{selector:'node[kind="tx"]',style:{shape:'round-rectangle'}},
-{selector:'edge',style:{width:1.5,'line-color':'#3d4b6b','target-arrow-color':'#3d4b6b','target-arrow-shape':'triangle','curve-style':'bezier','label':'data(lbl)','font-size':7,color:'#8b949e','text-rotation':'autorotate'}},
-{selector:'edge.hot',style:{width:3.5,'line-color':'#ff5d5d','target-arrow-color':'#ff5d5d',color:'#ffb3b3','z-index':9}},
-{selector:'edge.hotx',style:{width:3,'line-color':'#4c8dff','target-arrow-color':'#4c8dff','z-index':8}},
-{selector:'node.hot',style:{'border-width':3,'border-color':'#ff5d5d'}},
-{selector:':selected',style:{'border-width':3,'border-color':'#ffd33d'}}]});
-const lay=()=>({name:'cose',animate:false,nodeRepulsion:9000,idealEdgeLength:110});
-const short=a=>a.startsWith('tx:')?a.slice(0,13)+'…':a.slice(0,6)+'…'+a.slice(-4);
-const fmt=n=>(+n).toLocaleString(undefined,{maximumFractionDigits:6});
-let chainOf={}, expanded=new Set();
-const dts=()=>{const f=document.getElementById('df').value,t=document.getElementById('dt').value;let s='';
- if(f)s+='&date_from='+Math.floor(Date.parse(f)/1000);if(t)s+='&date_to='+(Math.floor(Date.parse(t)/1000)+86399);return s};
-let cur=null;
-async function api(q,cursor){document.getElementById('status').textContent='loading '+short(q)+'…';
- const r=await fetch('/api/lookup?q='+encodeURIComponent(q)+dts()+(cursor?'&cursor='+encodeURIComponent(cursor):''));const j=await r.json();document.getElementById('status').textContent=r.ok?'':'error: '+j.detail;if(!r.ok)throw j;return j}
-function add(d,focus){const els=[];
+const CH={btc:{c:'#f7931a',n:'BTC',sym:'₿',tx:'https://mempool.space/tx/',ad:'https://mempool.space/address/'},
+ eth:{c:'#8c9eff',n:'ETH',sym:'Ξ',tx:'https://etherscan.io/tx/',ad:'https://etherscan.io/address/'},
+ sol:{c:'#14f195',n:'SOL',sym:'◎',tx:'https://solscan.io/tx/',ad:'https://solscan.io/account/'}};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const short=a=>!a?'':a.startsWith('tx:')?'tx '+a.slice(3,11)+'…':a.length>16?a.slice(0,6)+'…'+a.slice(-4):a;
+const fmt=(n,d=6)=>n==null||isNaN(n)?'–':(+n).toLocaleString(undefined,{maximumFractionDigits:Math.abs(n)>=1000?2:d});
+const usd=n=>n==null?'':'$'+(+n).toLocaleString(undefined,{maximumFractionDigits:Math.abs(n)>=100?0:2});
+const tfmt=t=>{if(!t)return'pending';const d=typeof t==='number'?new Date(t*1000):new Date(t);return isNaN(d)?'':d.toISOString().slice(0,16).replace('T',' ')};
+function detect(q){q=q.trim();if(/^0x[0-9a-fA-F]{40}$/.test(q))return['eth','address'];if(/^0x[0-9a-fA-F]{64}$/.test(q))return['eth','tx'];
+ if(/^[0-9a-fA-F]{64}$/.test(q))return['btc','tx'];if(/^(bc1[02-9ac-hj-np-z]{11,71}|[13][1-9A-HJ-NP-Za-km-z]{25,34})$/.test(q))return['btc','address'];
+ if(/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(q))return['sol','tx'];if(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(q))return['sol','address'];return[null,null]}
+function setBadge(){const[c,k]=detect($('q').value);const b=$('chainBadge');b.className='badge '+(c||'');b.textContent=c?CH[c].sym+' '+CH[c].n+(k==='tx'?' TX':''):'AUTO'}
+$('q').addEventListener('input',setBadge);$('q').addEventListener('keydown',e=>{if(e.key==='Enter')go()});
+function toast(m){const t=$('toast');t.textContent=m;t.classList.add('on');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('on'),1800)}
+function copy(s){navigator.clipboard?.writeText(s).then(()=>toast('Copied'),()=>toast('Copy failed'))}
+function busy(on,msg){document.body.classList.toggle('busy',!!on);$('stxt').textContent=msg||''}
+// status shim (kept for scripts/tests that read #status text)
+Object.defineProperty(window,'statusText',{get:()=>$('stxt').textContent});
+// ---------- icons ----------
+const iconCache={};
+function icon(kind){if(iconCache[kind])return iconCache[kind];const[c,g]=CAT[kind]||['#6b7591',''];
+ const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><defs><radialGradient id="g" cx="35%" cy="30%"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs><circle cx="32" cy="32" r="30" fill="${c}"/><circle cx="32" cy="32" r="30" fill="url(#g)"/><text x="32" y="33" font-family="Arial,Segoe UI Symbol,DejaVu Sans,sans-serif" font-size="30" font-weight="700" fill="#0b0f1a" text-anchor="middle" dominant-baseline="central">${g}</text></svg>`;
+ return iconCache[kind]='data:image/svg+xml;utf8,'+encodeURIComponent(svg)}
+$('legend').innerHTML=Object.entries(CAT).filter(([k])=>!['terrorism','ransomware'].includes(k)).map(([k,[c,,n]])=>`<span><b style="background:${c}"></b>${n}</span>`).join('')+'<span><b style="background:#6b7591"></b>Unknown</span>';
+// ---------- graph ----------
+const ew=e=>{const u=e.data('usd');return u?Math.min(9,1.2+1.25*Math.log10(1+u/50)):1.4};
+const cy=cytoscape({container:$('cy'),wheelSensitivity:.25,minZoom:.08,maxZoom:4,style:[
+ {selector:'node',style:{'background-color':e=>(CAT[e.data('kind')]||['#3a4360'])[0],'background-image':e=>icon(e.data('kind')),'background-fit':'cover','background-opacity':1,
+  width:e=>e.data('focus')?44:28,height:e=>e.data('focus')?44:28,label:'data(lbl)',color:'#c9d2e6','font-size':9,'font-family':'ui-sans-serif,Segoe UI,Arial','text-valign':'bottom','text-margin-y':5,
+  'text-background-color':'#070a12','text-background-opacity':.55,'text-background-padding':2,'text-background-shape':'roundrectangle','border-width':e=>e.data('focus')?3:1.5,
+  'border-color':e=>e.data('focus')?'#fff':'rgba(255,255,255,.25)','overlay-opacity':0,'transition-property':'border-width,border-color,opacity','transition-duration':'.2s'}},
+ {selector:'node[!kind]',style:{'background-image':'none','background-color':'#3a4360'}},
+ {selector:'node[kind="tx"]',style:{shape:'round-rectangle'}},
+ {selector:'edge',style:{width:ew,'line-color':'rgba(130,150,200,.38)','target-arrow-color':'rgba(130,150,200,.6)','target-arrow-shape':'triangle','arrow-scale':.9,'curve-style':'bezier',
+  label:'data(lbl)','font-size':7,color:'#7f8aa6','text-rotation':'autorotate','text-background-color':'#070a12','text-background-opacity':.6,'text-background-padding':1.5,'transition-property':'line-color,width,opacity','transition-duration':'.25s'}},
+ {selector:'edge.hot',style:{'line-color':'#ff4d6d','target-arrow-color':'#ff4d6d',color:'#ffc2cd','z-index':9,'line-style':'solid',width:e=>ew(e)+1.6}},
+ {selector:'edge.hotx',style:{'line-color':'#4c8dff','target-arrow-color':'#4c8dff','z-index':8,width:e=>ew(e)+1}},
+ {selector:'node.hot',style:{'border-width':4,'border-color':'#ff4d6d'}},
+ {selector:'.faded',style:{opacity:.18}},
+ {selector:':selected',style:{'border-width':4,'border-color':'#f6c945'}}]});
+const lay=()=>({name:'cose',animate:true,animationDuration:550,randomize:false,nodeRepulsion:()=>12000,idealEdgeLength:()=>120,edgeElasticity:()=>80,gravity:.35,numIter:1200,padding:40,nodeDimensionsIncludeLabels:true});
+function relayout(){cy.layout(lay()).run()}
+function zoomBy(f){cy.animate({zoom:{level:cy.zoom()*f,renderedPosition:{x:cy.width()/2,y:cy.height()/2}}},{duration:200})}
+function clearHl(){cy.elements().removeClass('faded hot hotx');cy.elements().unselect()}
+let chainOf={},expanded=new Set(),cur=null,job=null,lastTrace=null,mode='lookup';
+function add(d,focus){const els=[],ids=new Set();$('empty').style.display='none';
  for(const n of d.nodes){chainOf[n.id]=n.chain;const ex=cy.getElementById(n.id);
-  if(ex.length){if(n.kind)ex.data('kind',n.kind);continue}
-  els.push({group:'nodes',data:{id:n.id,lbl:n.name||short(n.id),kind:n.kind,info:n,focus:n.id===focus}})}
+  if(ex.length){if(n.kind&&!ex.data('kind')){ex.data('kind',n.kind);ex.data('info',n);ex.data('lbl',n.name||short(n.id))}continue}
+  ids.add(n.id);els.push({group:'nodes',data:{id:n.id,lbl:n.name?(n.name.length>26?n.name.slice(0,25)+'…':n.name):short(n.id),kind:n.kind||undefined,info:n,focus:n.id===focus}})}
  for(const e of d.edges){const id=e.source+'>'+e.target+(e.unit||'');if(cy.getElementById(id).length)continue;
-  els.push({group:'edges',data:{id,source:e.source,target:e.target,lbl:fmt(e.amount)+' '+(e.unit||d.unit)+(e.count>1?' ×'+e.count:''),info:e}})}
- cy.add(els);cy.layout(lay()).run()}
-async function go(){const q=document.getElementById('q').value.trim();if(!q)return;cy.elements().remove();expanded.clear();
- try{const d=await api(q);add(d,d.address||('tx:'+d.tx));expanded.add(d.address);cur=d;render(d)}catch(e){}}
-async function loadMore(){if(!cur||!cur.next)return;const b=document.getElementById('more');if(b)b.textContent='loading…';
- try{const d=await api(cur.address,cur.next);add(d,null);d.balance=cur.balance;d.tx_count=cur.tx_count;d.tokens=cur.tokens;d.risk=cur.risk;d.label=cur.label;
- d.txs=cur.txs.concat(d.txs);d.cluster=[...new Set((cur.cluster||[]).concat(d.cluster||[]))];d.kind='address';cur=d;render(d)}catch(e){}}
-let job=null;
-async function traceN(){const q=document.getElementById('q').value.trim();if(!q)return;cy.elements().remove();expanded.clear();
- const p=`q=${encodeURIComponent(q)}&hops=${hops.value}&direction=${dir.value}&topk=${topk.value}`;
- const r=await fetch('/api/trace?'+p,{method:'POST'});const j=await r.json();if(!r.ok){document.getElementById('status').textContent='error: '+j.detail;return}
- job=j.job;tracebtn.disabled=true;poll(job,q)}
-async function poll(id,q){const r=await fetch('/api/trace/'+id);if(id!==job)return;
- if(!r.ok){document.getElementById('status').textContent=r.status===404?'trace lost (server restarted or slept) - please run it again':'trace poll error '+r.status;tracebtn.disabled=false;return}
- const j=await r.json();
- const n0=cy.nodes().length;add({nodes:j.nodes,edges:j.edges,unit:''},j.root);if(cy.nodes().length===n0&&j.status!=='done')0;
- document.getElementById('status').textContent=`trace ${j.status}: ${j.progress} · ${j.nodes.length} nodes`+(j.capped?' (capped)':'');
- if(j.status==='running'||j.status==='queued'){setTimeout(()=>poll(id,q),1500);return}
- tracebtn.disabled=false;window.lastTrace=j;highlight(j);renderTrace(j)}
-function highlight(j){cy.elements().removeClass('hot hotx');for(const p of j.paths){for(const e of p.edges){
- cy.getElementById(e[0]+'>'+e[1]+(e[2]||'')).addClass(HIGH.includes(p.kind)?'hot':'hotx')}if(HIGH.includes(p.kind))p.nodes.forEach(n=>cy.getElementById(n).addClass('hot'))}}
-function renderTrace(j){const r=j.risk||{};let h=`<div class="card"><b>Multi-hop trace</b> (${j.direction}, ${j.hops} hops) · ${j.nodes.length} nodes · ${j.elapsed}s
- <div class="mono">${j.q}</div>${j.summary&&j.summary.balance!=null?`<div>Balance: <b>${fmt(j.summary.balance)} ${j.summary.unit}</b></div>`:''}
- <div class="risk ${r.level}">Risk ${r.score}/100 · ${r.level}</div>${(r.reasons||[]).map(x=>'<div style="font-size:12px">⚠ '+x+'</div>').join('')}
- ${j.errors.length?'<div style="color:#d29922;font-size:12px">'+j.errors.length+' fetch error(s)</div>':''}</div>
- <div class="card"><b>Paths to labelled entities (${j.paths.length})</b>`+j.paths.map((p,i)=>`<div style="cursor:pointer;margin:4px 0" onclick="focusPath(${i})"><span class="tag ${p.kind}">${p.kind}</span> ${p.name||short(p.target)} · ${p.hops} hop(s) <span style="color:#8b949e;font-size:11px">src: ${p.sources||'?'}</span></div>`).join('')+'</div>';
- side.innerHTML=h}
-function focusPath(i){const p=window.lastTrace.paths[i];cy.elements().unselect();const c=cy.collection();p.nodes.forEach(n=>c.merge(cy.getElementById(n)));c.select();cy.fit(c,80)}
+  const has=x=>ids.has(x)||cy.getElementById(x).length;if(!has(e.source)||!has(e.target))continue;
+  els.push({group:'edges',data:{id,source:e.source,target:e.target,usd:e.usd||0,lbl:fmt(e.amount,4)+' '+(e.unit||d.unit||'')+(e.usd?' · '+usd(e.usd):'')+(e.count>1?' ×'+e.count:''),info:e}})}
+ cy.add(els);if(els.length)relayout()}
+// ---------- API ----------
+const dts=()=>{const f=$('df').value,t=$('dt').value;let s='';if(f)s+='&date_from='+Math.floor(Date.parse(f)/1000);if(t)s+='&date_to='+(Math.floor(Date.parse(t)/1000)+86399);return s};
+async function api(q,cursor){busy(true,'Loading '+short(q)+'…');
+ try{const r=await fetch('/api/lookup?q='+encodeURIComponent(q)+dts()+(cursor?'&cursor='+encodeURIComponent(cursor):''));const j=await r.json();
+  if(!r.ok){busy(false,'Error: '+(j.detail||r.status));toast(j.detail||'Error');throw j}busy(false,'');return j}catch(e){busy(false,$('stxt').textContent||'Network error');throw e}}
+function skeleton(){$('side').innerHTML=`<div class="card glass"><div class="sk" style="width:60%"></div><div class="sk" style="height:46px"></div><div class="sk" style="width:80%"></div></div><div class="card glass"><div class="sk"></div><div class="sk"></div><div class="sk"></div><div class="sk"></div></div>`}
+function share(extra){const p=new URLSearchParams();const q=$('q').value.trim();if(q)p.set('q',q);
+ if(mode==='trace'){p.set('mode','trace');p.set('hops',$('hops').value);p.set('dir',$('dir').value);p.set('topk',$('topk').value)}
+ if($('df').value)p.set('from',$('df').value);if($('dt').value)p.set('to',$('dt').value);history.replaceState(null,'','?'+p.toString())}
+function demo(a){$('q').value=a;setBadge();go()}
+async function go(){const q=$('q').value.trim();if(!q)return;mode='lookup';share();cy.elements().remove();expanded.clear();$('det').innerHTML='';skeleton();
+ try{const d=await api(q);add(d,d.address||('tx:'+d.tx));expanded.add(d.address);cur=d;render(d);cy.animate({fit:{padding:40}},{duration:400})}catch(e){$('side').innerHTML=''}}
+async function loadMore(){if(!cur||!cur.next)return;const b=$('more');if(b){b.disabled=true;b.textContent='Loading…'}
+ try{const d=await api(cur.address,cur.next);add(d,null);Object.assign(d,{balance:cur.balance,balance_usd:cur.balance_usd,tx_count:cur.tx_count,tokens:cur.tokens,risk:cur.risk,label:cur.label,kind:'address'});
+  d.txs=cur.txs.concat(d.txs);d.cluster=[...new Set((cur.cluster||[]).concat(d.cluster||[]))];cur=d;render(d)}catch(e){if(b){b.disabled=false;b.textContent='Load more'}}}
 async function expand(id){if(id.startsWith('tx:')||expanded.has(id))return;expanded.add(id);
- try{const d=await api(id);add(d,null);render(d)}catch(e){}}
-function tags(n){return (n.kind?`<span class="tag ${n.kind}">${n.kind}</span>`:'')+(n.tags||[]).map(t=>`<span class="tag">${t}</span>`).join('')}
-function render(d){const r=d.risk||{};let h=`<div class="card"><div class="mono">${(d.chain||'').toUpperCase()} ${d.kind}: ${d.address||d.tx}</div>
- <div class="risk ${r.level}">Risk ${r.score}/100 · ${r.level}</div>${(r.reasons||[]).map(x=>'<div>⚠ '+x+'</div>').join('')}
- ${d.label?'<div>'+(d.label.name||'')+' '+tags(d.label)+'</div>'+((d.label.sources||[]).length?'<div style="font-size:11px;color:#8b949e">sources: '+[...new Set(d.label.sources.map(s=>s.source+' ('+s.licence+')'))].join('; ')+'</div>':''):''}`;
- if(d.kind==='address'){h+=`<div>Balance: <b>${fmt(d.balance)} ${d.unit}</b> · tx count: ${d.tx_count??'?'}</div>`;
-  if(d.tokens&&d.tokens.length)h+='<div>Tokens: '+d.tokens.map(t=>fmt(t.amount)+' '+(t.symbol||short(t.mint))).join(', ')+'</div>'}
- else h+=`<div>Fee: ${fmt(d.fee)} ${d.unit} · time: ${d.time?new Date((typeof d.time==='number'?d.time*1000:d.time)).toISOString():'pending'}</div>`;
- if(d.cluster&&d.cluster.length>1)h+=`<div style="margin-top:6px"><b>Common-input cluster (${d.cluster.length})</b><div class="mono">${d.cluster.slice(0,30).join('<br>')}</div></div>`;
+ try{const d=await api(id);add(d,null);toast('Expanded '+short(id)+' (+'+d.edges.length+' flows)')}catch(e){expanded.delete(id)}}
+// ---------- trace jobs ----------
+async function traceN(){const q=$('q').value.trim();if(!q)return;mode='trace';share();cy.elements().remove();expanded.clear();$('det').innerHTML='';skeleton();
+ const p=`q=${encodeURIComponent(q)}&hops=${$('hops').value}&direction=${$('dir').value}&topk=${$('topk').value}`;
+ const r=await fetch('/api/trace?'+p,{method:'POST'});const j=await r.json();if(!r.ok){busy(false,'Error: '+j.detail);toast(j.detail);$('side').innerHTML='';return}
+ job=j.job;$('tracebtn').disabled=true;$('cancelbtn').style.display='';busy(true,'Trace queued…');poll(job)}
+async function cancelTrace(){if(!job)return;await fetch('/api/trace/'+job,{method:'DELETE'});toast('Cancelling…')}
+async function poll(id){let r;try{r=await fetch('/api/trace/'+id)}catch(e){setTimeout(()=>poll(id),2500);return}if(id!==job)return;
+ if(!r.ok){busy(false,r.status===404?'Trace lost (server restarted or slept) — please run it again':'Trace poll error '+r.status);$('tracebtn').disabled=false;$('cancelbtn').style.display='none';return}
+ const j=await r.json();add({nodes:j.nodes,edges:j.edges,unit:''},j.root);
+ if(j.status==='running'||j.status==='queued'){busy(true,`Trace ${j.status}: ${j.progress} · ${j.nodes.length} nodes`+(j.capped?' (capped)':''));setTimeout(()=>poll(id),1300);return}
+ busy(false,`trace ${j.status}: ${j.progress} · ${j.nodes.length} nodes`+(j.capped?' (capped)':''));
+ $('tracebtn').disabled=false;$('cancelbtn').style.display='none';lastTrace=j;window.lastTrace=j;highlight(j);renderTrace(j);cy.animate({fit:{padding:40}},{duration:400})}
+function highlight(j){cy.elements().removeClass('hot hotx');for(const p of j.paths||[]){const h=HIGH.includes(p.kind);
+ for(const e of p.edges)cy.getElementById(e[0]+'>'+e[1]+(e[2]||'')).addClass(h?'hot':'hotx');if(h)p.nodes.forEach(n=>cy.getElementById(n).addClass('hot'))}}
+function focusPath(i){const p=lastTrace.paths[i];const c=cy.collection();p.nodes.forEach(n=>c.merge(cy.getElementById(n)));
+ p.edges.forEach(e=>c.merge(cy.getElementById(e[0]+'>'+e[1]+(e[2]||''))));cy.elements().addClass('faded');c.removeClass('faded');cy.elements().unselect();c.nodes().select();cy.animate({fit:{eles:c,padding:70}},{duration:450})}
+// ---------- rendering ----------
+function gauge(score,level){const s=Math.max(0,Math.min(100,score||0));const col=s>=75?'#ff4d6d':s>=45?'#ff9f43':s>=20?'#f6c945':'#2ee59d';
+ const a=Math.PI*(1-s/100),x=60+48*Math.cos(a),y=60-48*Math.sin(a);
+ return `<svg class="gauge" viewBox="0 0 120 74"><path d="M12 60 A48 48 0 0 1 108 60" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="10" stroke-linecap="round"/>
+ <path d="M12 60 A48 48 0 0 1 ${x.toFixed(1)} ${y.toFixed(1)}" fill="none" stroke="${col}" stroke-width="10" stroke-linecap="round" style="filter:drop-shadow(0 0 6px ${col})"/>
+ <text x="60" y="54" text-anchor="middle" font-size="24" font-weight="800" fill="#fff">${s}</text><text x="60" y="70" text-anchor="middle" font-size="9" fill="${col}" letter-spacing="1.5">${(level||'').toUpperCase()}</text></svg>`}
+const tagH=k=>k&&CAT[k]?`<span class="tag" style="color:${CAT[k][0]};border-color:${CAT[k][0]}55;background:${CAT[k][0]}18">${CAT[k][1]} ${CAT[k][2]}</span>`:'';
+const chainTag=c=>c&&CH[c]?`<span class="badge ${c}">${CH[c].sym} ${CH[c].n}</span>`:'';
+const addrLine=(a,c,tx)=>`<div class="addr"><span class="mono">${esc(a)}</span><button class="copy" title="Copy" onclick="copy('${esc(a)}')">⧉</button>${c&&CH[c]?`<a class="copy" title="Open in explorer" target="_blank" rel="noopener" href="${(tx?CH[c].tx:CH[c].ad)+esc(a)}">↗</a>`:''}</div>`;
+function srcList(sources){if(!sources||!sources.length)return'';return '<div class="dim" style="font-size:11.5px;margin-top:8px">'+[...new Set(sources.map(s=>s.source+' · '+s.licence))].map(esc).join('<br>')+'</div>'}
+function render(d){const r=d.risk||{};const id=d.address||d.tx;let h=`<div class="card glass"><h3>${chainTag(d.chain)} ${d.kind==='tx'?'Transaction':'Address'}<span class="sp"></span></h3>${addrLine(id,d.chain,d.kind==='tx')}
+ ${d.label&&(d.label.name||d.label.kind)?`<div style="margin-top:8px;font-weight:600">${esc(d.label.name||'')} ${tagH(d.label.kind)}</div>`+srcList(d.label.sources):''}
+ <div class="riskrow" style="margin-top:12px">${gauge(r.score,r.level)}<div class="reasons" style="flex:1">${(r.reasons||[]).length?(r.reasons||[]).slice(0,5).map(x=>'<div>'+esc(x)+'</div>').join(''):'<div class="dim">No risk indicators found in the fetched activity.</div>'}</div></div>`;
+ if(d.kind==='address'){h+=`<div class="kv"><div>Balance</div><div><span class="big">${fmt(d.balance)} ${d.unit}</span> <span class="usd">${usd(d.balance_usd)}</span></div><div>Transactions</div><div>${d.tx_count??'?'}</div>
+  ${d.tokens&&d.tokens.length?'<div>Tokens</div><div>'+d.tokens.slice(0,8).map(t=>fmt(t.amount,2)+' '+esc(t.symbol||short(t.mint))).join(' · ')+'</div>':''}</div>`}
+ else h+=`<div class="kv"><div>Fee</div><div>${fmt(d.fee)} ${d.unit}</div><div>Time</div><div>${tfmt(d.time)} UTC</div>${d.status?`<div>Status</div><div>${esc(d.status)}</div>`:''}</div>`;
+ if(d.cluster&&d.cluster.length>1)h+=`<details style="margin-top:10px"><summary class="dim">Common-input cluster · ${d.cluster.length} addresses</summary><div class="mono" style="margin-top:6px">${d.cluster.slice(0,40).map(esc).join('<br>')}</div></details>`;
  h+='</div>';
- if(d.txs){h+='<div class="card"><b>Recent activity</b><table>'+d.txs.map(t=>`<tr><td class="mono">${short(t.tx||'')}</td><td>${t.time?(typeof t.time==='number'?new Date(t.time*1000):new Date(t.time)).toISOString().slice(0,16).replace('T',' '):''}</td><td class="${t.delta>=0?'pos':'neg'}">${t.delta>=0?'+':''}${fmt(t.delta)} ${t.unit}</td></tr>`).join('')+'</table>'+(d.next?'<button id="more" onclick="loadMore()">Load more</button>':'<div style="font-size:12px;color:#8b949e">end of history (or date range)</div>')+` <span style="font-size:12px">${d.txs.length} loaded</span></div>`}
- document.getElementById('side').innerHTML=h}
-cy.on('tap','node',e=>{const n=e.target.data('info');document.getElementById('det').innerHTML=`<div class="card"><b>${n.name||'Address'}</b> ${tags(n)}
- <div class="mono">${n.id}</div>${(n.sources||[]).length?'<div style="font-size:11px;margin-top:4px"><b>Label sources</b>'+n.sources.map(s=>`<div>• ${s.category||''} “${s.name||''}” — ${s.source} (${s.licence}, conf ${s.confidence})</div>`).join('')+'</div>':''}${n.id.startsWith('tx:')?'':`<button onclick="expand('${n.id}')">Expand hops</button> <button class="s" onclick="document.getElementById('q').value='${n.id}';go()">Trace as root</button>`}</div>`});
+ if(d.txs){h+=`<div class="card glass"><h3>Activity<span class="sp"></span><span class="dim" style="text-transform:none;letter-spacing:0">${d.txs.length} loaded</span></h3><table>`+d.txs.map(t=>`<tr><td><a class="mono" target="_blank" rel="noopener" href="${CH[d.chain].tx+esc(t.tx)}">${short(t.tx||'')}</a><button class="copy" onclick="copy('${esc(t.tx)}')">⧉</button><div class="dim" style="font-size:11px">${tfmt(t.time)}${t.method?' · '+esc(t.method):''}</div></td><td class="r ${t.delta>=0?'pos':'neg'}">${t.delta>=0?'+':''}${fmt(t.delta,4)} ${esc(t.unit)}<div class="dim" style="font-size:11px">${usd(t.usd)}</div></td></tr>`).join('')+'</table>'
+  +(d.next?'<div class="row"><button class="btn" id="more" onclick="loadMore()">Load more</button></div>':'<div class="dim" style="font-size:12px;margin-top:8px">End of history (or date range)</div>')+'</div>'}
+ $('side').innerHTML=h}
+function renderTrace(j){const r=j.risk||{};let h=`<div class="card glass"><h3>${chainTag(j.chain)} Multi-hop trace<span class="sp"></span><span class="dim" style="text-transform:none;letter-spacing:0">${j.direction} · ${j.hops} hops · ${j.elapsed??'–'}s</span></h3>${addrLine(j.q,j.chain,!(j.root||'').indexOf('tx:'))}
+ ${j.summary&&j.summary.balance!=null?`<div class="kv"><div>Balance</div><div><span class="big">${fmt(j.summary.balance)} ${j.summary.unit}</span></div><div>Graph</div><div>${j.nodes.length} nodes · ${j.edges.length} flows${j.capped?' (capped)':''}</div></div>`:''}
+ <div class="riskrow" style="margin-top:12px">${gauge(r.score,r.level)}<div class="reasons" style="flex:1">${(r.reasons||[]).slice(0,6).map(x=>'<div>'+esc(x)+'</div>').join('')||'<div class="dim">No labelled entities reached.</div>'}</div></div>
+ ${j.errors&&j.errors.length?`<div class="dim" style="margin-top:8px;color:#f6c945">${j.errors.length} fetch error(s) — partial result</div>`:''}</div>
+ <div class="card glass"><h3>Paths to labelled entities · ${(j.paths||[]).length}</h3>`+((j.paths||[]).map((p,i)=>`<div class="path" onclick="focusPath(${i})">${tagH(p.kind)}<div style="flex:1;min-width:0"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name||short(p.target))}</div><div class="dim" style="font-size:11px">${p.dir} · ${p.hops} hop(s) · src: ${esc(p.sources||'?')}</div></div></div>`).join('')||'<div class="dim">None within the explored hops.</div>')+'</div>';
+ $('side').innerHTML=h}
+cy.on('tap','node',e=>{const n=e.target.data('info')||{};const isTx=n.id&&n.id.startsWith('tx:');
+ $('det').innerHTML=`<div class="card glass"><h3>${chainTag(n.chain)} ${esc(n.name||(isTx?'Transaction':'Address'))} ${tagH(n.kind)}</h3>${addrLine(isTx?n.id.slice(3):n.id,n.chain,isTx)}
+ ${(n.sources||[]).length?'<div style="font-size:12px;margin-top:8px">'+n.sources.map(s=>`<div style="margin:3px 0">${tagH(s.category)} “${esc(s.name||'')}”<div class="dim" style="font-size:11px">${esc(s.source)} · ${esc(s.licence)} · conf ${s.confidence}</div></div>`).join('')+'</div>':''}
+ ${isTx?'':`<div class="row"><button class="btn sm pri" onclick="expand('${esc(n.id)}')">Expand hops</button><button class="btn sm" onclick="$('q').value='${esc(n.id)}';setBadge();go()">Trace as root</button></div>`}</div>`;
+ if(innerWidth<900)$('det').scrollIntoView({behavior:'smooth'})});
 cy.on('dbltap','node',e=>expand(e.target.id()));
-cy.on('tap','edge',e=>{const x=e.target.data('info');document.getElementById('det').innerHTML=`<div class="card"><b>Flow</b> ${fmt(x.amount)} ${x.unit||''} (${x.count||1} tx)<div class="mono">${x.source}<br>→ ${x.target}<br>tx: ${x.tx}</div></div>`});
-document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter')go()});
-const p=new URLSearchParams(location.search).get('q');if(p){document.getElementById('q').value=p;go()}
+cy.on('tap','edge',e=>{const x=e.target.data('info');const c=chainOf[x.source]||chainOf[x.target];
+ $('det').innerHTML=`<div class="card glass"><h3>Flow</h3><div class="big">${fmt(x.amount)} ${esc(x.unit||'')} <span class="usd">${usd(x.usd)}</span></div><div class="dim">${x.count||1} transfer(s)</div>
+ <div class="kv"><div>From</div><div class="mono">${esc(x.source)}</div><div>To</div><div class="mono">${esc(x.target)}</div><div>Tx</div><div>${x.tx?`<a class="mono" target="_blank" rel="noopener" href="${CH[c]?.tx||'#'}${esc(x.tx)}">${short(x.tx)}</a>`:''}</div></div></div>`});
+cy.on('tap',e=>{if(e.target===cy)cy.elements().removeClass('faded')});
+// ---------- export ----------
+function dl(name,blob){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);exportMenu.classList.remove('open')}
+const base=()=>'chaintrace-'+($('q').value.trim().slice(0,12)||'graph');
+function exportPNG(){if(!cy.nodes().length)return toast('Nothing to export');dl(base()+'.png',cy.png({full:true,scale:2,bg:'#070a12',output:'blob'}))}
+function exportCSV(){const rows=[['source','target','amount','unit','usd','count','tx','source_label','target_label']];
+ cy.edges().forEach(e=>{const x=e.data('info');const sl=cy.getElementById(x.source).data('info')||{},tl=cy.getElementById(x.target).data('info')||{};
+  rows.push([x.source,x.target,x.amount,x.unit||'',x.usd||'',x.count||1,x.tx||'',(sl.kind||'')+(sl.name?':'+sl.name:''),(tl.kind||'')+(tl.name?':'+tl.name:'')])});
+ dl(base()+'-flows.csv',new Blob([rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'}))}
+function exportJSON(){const o={query:$('q').value.trim(),exported:new Date().toISOString(),mode,trace:mode==='trace'?lastTrace:null,lookup:mode==='lookup'?cur:null,
+ nodes:cy.nodes().map(n=>n.data('info')),edges:cy.edges().map(e=>e.data('info'))};dl(base()+'.json',new Blob([JSON.stringify(o,null,1)],{type:'application/json'}))}
+function copyLink(){share();copy(location.href);exportMenu.classList.remove('open')}
+document.addEventListener('click',e=>{if(!exportMenu.contains(e.target))exportMenu.classList.remove('open')});
+// ---------- deep links ----------
+(function(){const p=new URLSearchParams(location.search);const q=p.get('q');if(p.get('hops'))$('hops').value=p.get('hops');if(p.get('dir'))$('dir').value=p.get('dir');
+ if(p.get('topk'))$('topk').value=p.get('topk');if(p.get('from'))$('df').value=p.get('from');if(p.get('to'))$('dt').value=p.get('to');
+ if(q){$('q').value=q;setBadge();p.get('mode')==='trace'?traceN():go()}})();
 </script></body></html>

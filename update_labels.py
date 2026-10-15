@@ -37,14 +37,15 @@ SOURCES = {  # id -> (description, url, licence, default confidence, clear_licen
  "sol-forensic": ("Solana CEX/DeFi labels (ImMike aggregate of apostleoffinance/Solana-Forensic-Analysis-Tool; upstream Vybe/Dune/Flipside-derived)",
                   "https://github.com/ImMike/crypto-wallet-address-labels/tree/main/datasets/solana-wallet-and-program-labels", "MIT (repo); upstream API-derived, provenance caveat", 0.6, True),
  "jasontth": ("Jasontth/crypto_label via ImMike (BTC/ETH)", "https://github.com/Jasontth/crypto_label", "UNCLEAR (no licence upstream)", 0.6, False),
+ "allowlist": ("ChainTrace allowlist of major tokens / protocol infra (overrides risk labels)", "update_labels.py", "own work", 0.99, True),
  "builtin": ("ChainTrace hand-curated seed list", "local labels.py", "own work", 0.8, True),
 }
 EXCH = r"binance|coinbase|kraken|huobi|htx|okx|okex|bitfinex|bittrex|poloniex|kucoin|gate[-. ]?io|bybit|crypto[-. ]?com|gemini|bitstamp|ftx|upbit|bithumb|mexc|bitget|hotbit|robinhood|bitflyer|bitmex|deribit|exchange|cex|hitbtc|\bliquid\b|zb\.com|bitso|coinone|korbit|luno|paxful|localbitcoins|cryptopia|yobit|exmo|wazirx|coincheck|bitpanda"
 CAT_RULES = [  # (regex on lowercased label/category text, category)
  (r"sanction|ofac", "sanctioned"), (r"ransom", "ransomware"), (r"darknet|dark[-_ ]?market|^market$|silk ?road|hydra|alphabay|drug", "darknet"),
  (r"tornado|mixer|mixing|whirlpool|samourai|wasabi|coinjoin|chipmixer|blender|sinbad", "mixer"),
- (r"phish|scam|fake_|ponzi|sextortion|fraud|rug|drainer|impersonat", "scam"),
- (r"hack|exploit|heist|attacker|stolen|theft|terror|alqaeda", "hack"), (r"blocked|blacklist|frozen", "blocklisted"),
+ (r"phish|scam|fake_|ponzi|sextortion|\bfraud\b(?![- ]proof)|\brug(pull|-pull|ged)?\b|drainer|impersonat", "scam"),
+ (r"hack|exploit|heist|attacker|stolen|theft|terror|alqaeda", "hack"), (r"blacklist|frozen", "blocklisted"),
  (r"gambl|casino|betting|dice|lottery", "gambling"), (r"bridge|layer-2|wormhole|multichain|stargate|hop-protocol|across", "bridge"),
  (EXCH, "exchange"),
  (r"defi|dex|swap|uniswap|sushi|balancer|curve|aave|compound|maker|yearn|lido|1inch|0x-protocol|bancor|synthetix|kyber|dydx|lending|vault|pool|amm|farm|staking|router|raydium|orca|jupiter|marinade|kamino|serum|openbook|meteora|drift|solend", "defi"),
@@ -58,6 +59,53 @@ def cat_of(*texts):
         if re.search(rx, t): return c
     return "other"
 CONF = {"authority_data": 0.95, "ledger_immanent": 0.9, "service_data": 0.85, "forensic": 0.8, "web_crawl": 0.6, "heuristic": 0.5}
+# --- false-positive guards -------------------------------------------------
+# Major token contracts / infra: never carry risk categories (overrides every source).
+ALLOW = {"eth": {
+ "0xdac17f958d2ee523a2206206994597c13d831ec7": "Tether: USDT token contract", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "Circle: USDC token contract",
+ "0x6b175474e89094c44da98b954eedeac495271d0f": "Maker/Sky: DAI token contract", "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "WETH token contract",
+ "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": "WBTC token contract", "0x4fabb145d64652a948d72533023f6e7a623c7c53": "BUSD token contract",
+ "0x0000000000085d4780b73119b644ae5ecd22b376": "TrueUSD token contract", "0x8e870d67f660d95d5be530380d0ec0bd388289e1": "Pax Dollar token contract",
+ "0x6c3ea9036406852006290770bedfcaba0e23a0e8": "PayPal USD token contract", "0x514910771af9ca656af840dff83e8264ecf986ca": "Chainlink LINK token",
+ "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984": "Uniswap UNI token", "0x7a250d5630b4cf539739df2c5dacb4c659f2488d": "Uniswap V2: Router 2",
+ "0xe592427a0aece92de3edee1f18e0157c05861564": "Uniswap V3: Router", "0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45": "Uniswap V3: Router 2",
+ "0x3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad": "Uniswap: Universal Router", "0x66a9893cc07d91d95644aedd05d03f95e1dba8af": "Uniswap V4: Universal Router",
+ "0x000000000022d473030f116ddee9f6b43ac78ba3": "Uniswap: Permit2", "0x1111111254eeb25477b68fb85ed929f73a960582": "1inch v5: Aggregation Router",
+ "0x111111125421ca6dc452d289314280a0f8842a65": "1inch v6: Aggregation Router", "0xdef1c0ded9bec7f1a1670819833240f027b25eff": "0x: Exchange Proxy",
+ "0x881d40237659c251811cec9c364ef91dc08d300c": "MetaMask: Swap Router", "0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f": "SushiSwap: Router",
+ "0x0000000000000000000000000000000000000000": "Null address", "0x000000000000000000000000000000000000dead": "Burn address",
+ "0xae7ab96520de3a18e5e111b5eaab095312d7fe84": "Lido: stETH token", "0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0": "Lido: wstETH token",
+ "0x5c7bcd6e7de5423a257d81b442095a1a6ced35c5": "Across: Spoke Pool", "0x99c9fc46f92e8a1c0dec1b1747d010903e884be1": "Optimism: Gateway",
+ "0x8315177ab297ba92a06054ce80a67ed4dbd7ed3a": "Arbitrum: Bridge", "0x4dbd4fc535ac27206064b68ffcf827b0a60bab3f": "Arbitrum: Delayed Inbox",
+ "0x00000000219ab540356cbb839cbe05303d7705fa": "Beacon Deposit Contract"},
+ "sol": {"11111111111111111111111111111111": "System Program", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA": "SPL Token Program",
+         "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": "USDC mint", "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": "USDT mint",
+         "So11111111111111111111111111111111111111112": "Wrapped SOL mint", "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4": "Jupiter v6 aggregator"}}
+HIGH = ("sanctioned", "terrorism", "darknet", "ransomware", "hack", "scam", "mixer", "blocklisted", "gambling")
+# names that indicate a token contract / protocol infra rather than a culprit wallet
+INFRA = r"\btoken\b|stablecoin|\bnull\b|router|factory|one step proof|\bproxy\b|\bvault\b|\bbridge\b|multisig|\(\w{2,10}\)$"
+CULPRIT = r"exploit|hacker|attacker|phish|fake|scam|drainer|heist|thief|stolen|ponzi|ransom|launder|lazarus"
+def fp_filter(db):
+    """Remove risk labels that are almost certainly false positives. Returns count removed."""
+    n0 = db.total_changes
+    # 1) holders blocklisted by USDT etc: drop when the address is evidently a token/infra contract (named so by any source)
+    for chain, addr in list(db.execute("SELECT DISTINCT chain,address FROM labels WHERE category='blocklisted'")):
+        names = " | ".join(r[0] or "" for r in db.execute("SELECT name FROM labels WHERE chain=? AND address=?", (chain, addr)))
+        cats = {r[0] for r in db.execute("SELECT category FROM labels WHERE chain=? AND address=?", (chain, addr))}
+        if re.search(INFRA, names, re.I) or cats & {"defi", "bridge", "exchange"}:
+            db.execute("DELETE FROM labels WHERE chain=? AND address=? AND category='blocklisted'", (chain, addr))
+    # 2) keyword-inferred scam/hack on infra-named contracts (e.g. Arbitrum 'fraud proof' contracts) unless the name itself names a culprit
+    for rid, name in list(db.execute("SELECT rowid,name FROM labels WHERE category IN ('scam','hack') AND source IN ('dawsbot','etherscan-labels','graphsense','openlabels')")):
+        if name and re.search(INFRA, name, re.I) and not re.search(CULPRIT, name, re.I):
+            db.execute("DELETE FROM labels WHERE rowid=?", (rid,))
+    # 3) allowlist: strip every risk label from major tokens/infra and add a clean label
+    for chain, d in ALLOW.items():
+        for addr, name in d.items():
+            a = addr.lower() if chain == "eth" else addr
+            db.execute(f"DELETE FROM labels WHERE chain=? AND address=? AND category IN ({','.join('?'*len(HIGH))})", (chain, a, *HIGH))
+            db.execute("DELETE FROM labels WHERE chain=? AND address=? AND category='exchange'", (chain, a))
+            db.execute("INSERT INTO labels VALUES(?,?,?,?,?,?,?,?,?)", (chain, a, "defi", name.split(":")[0], name, "allowlist", "update_labels.py ALLOW", "own work", 0.99))
+    return db.total_changes - n0
 GS_MAP = {"exchange": "exchange", "gambling": "gambling", "miner": "miner", "mixing_service": "mixer", "coinjoin": "mixer",
           "black_list": "blocklisted", "wallet_service": "other", "service": "other"}
 GS_PACK = {"aft-alqaeda": "terrorism", "binance_hack": "hack", "etherscamdb": "scam", "hacks": "hack", "ponzi": "scam", "ransom": "ransomware", "sextortion": "scam"}
@@ -111,11 +159,13 @@ def build(include_unclear=False):
     # dawsbot
     for r in csv.DictReader(open(os.path.join(SRC, "dawsbot_accounts.csv"))):
         if r["chainId"] != "1": continue
-        slug = r["label"]; c = cat_of(slug) if slug not in ("ofac-sanctions-lists",) else ("mixer" if "tornado" in r["nameTag"].lower() else "blocklisted")
+        slug = r["label"]
+        if slug == "blocked": continue   # Etherscan 'blocked' tag mostly marks token contracts, not frozen holders
+        c = cat_of(slug) if slug not in ("ofac-sanctions-lists",) else ("mixer" if "tornado" in r["nameTag"].lower() else "blocklisted")
         add("eth", r["address"], c, r["nameTag"] or slug, "dawsbot", entity=slug)
     # brianleect etherscan-labels
     for a, v in json.load(open(os.path.join(SRC, "es_accounts.json"))).items():
-        ls = [x for x in v.get("labels", []) if x not in ("take-action", "old-contract", "deprecated", "v2")]
+        ls = [x for x in v.get("labels", []) if x not in ("take-action", "old-contract", "deprecated", "v2", "blocked")]
         c = cat_of(*ls) if "ofac-sanctions-lists" not in ls else ("mixer" if "tornado-cash" in ls else "blocklisted")
         add("eth", a, c, v.get("name") or (ls[0] if ls else ""), "etherscan-labels", entity=ls[0] if ls else None)
     # Forta
@@ -155,6 +205,7 @@ def build(include_unclear=False):
     db.executemany("INSERT INTO labels VALUES(?,?,?,?,?,?,?,?,?)", rows)
     db.execute("DELETE FROM labels WHERE rowid NOT IN (SELECT min(rowid) FROM labels GROUP BY chain,address,category,source)")
     db.execute("CREATE INDEX ix ON labels(chain,address)")
+    print("false-positive guard removed/changed rows:", fp_filter(db))
     for k, (d, u, l, _, ok) in SOURCES.items():
         n = db.execute("select count(*) from labels where source=?", (k,)).fetchone()[0]
         db.execute("INSERT INTO sources VALUES(?,?,?,?,?,?)", (k, d, u, l, int(ok or include_unclear), n))

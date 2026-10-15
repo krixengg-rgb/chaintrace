@@ -53,7 +53,9 @@ def finish(d):
         nb = [n for n in d["nodes"] if n.get("kind") != "tx"]
         worst = max(nb, key=lambda n: n["risk"], default=None)
         d["risk"] = labels.score({"risk":0,"kind":None}, nb) if worst else {"score":0,"level":"low","reasons":[]}
-    for n in d["nodes"]: n["flag"] = n.get("kind") in ("sanctioned", "mixer")
+    for n in d["nodes"]: n["flag"] = n.get("kind") in labels.EXPO
+    if d.get("balance") is not None: d["balance_usd"] = chains.usd_of(d["balance"], d.get("unit"))
+    d["price_usd"] = chains.PRICE.get((d.get("unit") or "").upper())
     return d
 @app.get("/api/lookup")
 async def lookup(q: str, chain: str | None = None, cursor: str | None = None, date_from: int | None = None, date_to: int | None = None):
@@ -63,7 +65,9 @@ async def lookup(q: str, chain: str | None = None, cursor: str | None = None, da
     try:
         if kind == "address":
             d = await chains.ADDR[c](q.strip(), cursor=cursor, f=date_from, to=date_to, pages=6 if (date_from or date_to) else 1)
-        else: d = await chains.TX[c](q.strip())
+        else:
+            await chains.ensure_prices(); d = await chains.TX[c](q.strip())
+            for e in d["edges"]: e.setdefault("usd", chains.usd_of(e.get("amount"), e.get("unit") or d.get("unit")))
     except Exception as e: raise HTTPException(502, f"{c} upstream error: {e}")
     d["kind"] = kind; return finish(d)
 @app.post("/api/trace")
@@ -80,6 +84,12 @@ def trace_get(job: str):
     j = trace.JOBS.get(job)
     if not j: raise HTTPException(404, "no such job")
     return j
+@app.delete("/api/trace/{job}")
+def trace_cancel(job: str):
+    if job not in trace.JOBS: raise HTTPException(404, "no such job")
+    return {"cancelled": trace.cancel(job)}
+@app.get("/api/prices")
+async def prices(): return await chains.ensure_prices()
 @app.get("/healthz")
 def healthz(): return {"ok": True, "labels_db": os.path.exists(labels.LDB)}
 @app.get("/api/cache")

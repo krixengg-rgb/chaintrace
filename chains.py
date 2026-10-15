@@ -40,7 +40,25 @@ def ts_of(t):
     except Exception: return None
 def enc(c): return base64.urlsafe_b64encode(json.dumps(c).encode()).decode() if c else None
 def dec(c): return json.loads(base64.urlsafe_b64decode(c.encode())) if c else None
-client = httpx.AsyncClient(timeout=25, headers={"User-Agent": "chaintrace-mvp"})
+client = httpx.AsyncClient(timeout=httpx.Timeout(15, connect=6), headers={"User-Agent": "chaintrace-mvp"},
+                           limits=httpx.Limits(max_connections=20, max_keepalive_connections=10))
+# ---- USD prices (CoinGecko free simple-price, cached 10 min) ----
+PRICE = {"USDT": 1.0, "USDC": 1.0, "DAI": 1.0, "USDS": 1.0, "PYUSD": 1.0, "FDUSD": 1.0, "TUSD": 1.0, "USDE": 1.0}
+_price_ts = [0.0]
+async def ensure_prices():
+    if time.time() - _price_ts[0] < 600: return PRICE
+    _price_ts[0] = time.time()
+    try:
+        d = await asyncio.wait_for(get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd", ttl=600), 8)
+        b, e, s = d["bitcoin"]["usd"], d["ethereum"]["usd"], d["solana"]["usd"]
+        PRICE.update({"BTC": b, "WBTC": b, "ETH": e, "WETH": e, "STETH": e, "SOL": s, "WSOL": s})
+    except Exception as ex:
+        print("price fetch failed:", ex); _price_ts[0] = time.time() - 540   # retry in ~1 min
+    return PRICE
+def usd_of(amount, unit, rate=None):
+    p = rate or PRICE.get((unit or "").upper())
+    try: return round(float(amount) * float(p), 2) if p and amount is not None else None
+    except Exception: return None
 async def get(url, ttl=TTL, **kw):
     k = ("GET", url, str(kw))
     if k in _cache and time.time() - _cache[k][0] < ttl: STATS["hit"] += 1; return _cache[k][1]
@@ -181,7 +199,9 @@ def _agg_unit(edges, cap):
         k = (e["source"], e["target"], e["unit"])
         if k in m: m[k]["amount"] += e["amount"]; m[k]["count"] += 1
         else: m[k] = {**e, "count": 1}
-    return sorted(m.values(), key=lambda e: -e["count"])[:cap]
+    for e in m.values(): e["usd"] = usd_of(e["amount"], e["unit"], e.pop("rate", None))
+    # keep the biggest flows by USD where known, then by frequency
+    return sorted(m.values(), key=lambda e: (-(e["usd"] or 0), -e["count"]))[:cap]
 async def eth_tx(h):
     t = await get(f"{BS}/transactions/{h}")
     try: tts = (await get(f"{BS}/transactions/{h}/token-transfers")).get("items", [])
@@ -282,16 +302,19 @@ def _finish_page(chain, focus, edges, hist, ntags=None, cap=60):
     for e in edges:
         for k in ("source", "target"): nodes.setdefault(e[k], node(chain, e[k], ntags.get(e[k])))
     hist.sort(key=lambda h: h.get("time") or 0, reverse=True)
+    for h in hist: h["usd"] = usd_of(abs(h.get("delta") or 0), h.get("unit"), h.pop("rate", None))
     return list(nodes.values()), edges, hist
 
 async def btc_page(a, cursor=None):
-    url = f"{MP}/address/{a}/txs" + (f"/chain/{cursor}" if cursor else "")
-    txs = await get(url, ttl=LONG if cursor else 900)
+    if cursor == "__chain__": url = f"{MP}/address/{a}/txs/chain"   # first confirmed page (first page was all mempool)
+    else: url = f"{MP}/address/{a}/txs" + (f"/chain/{cursor}" if cursor else "")
+    txs = await get(url, ttl=LONG if cursor and cursor != "__chain__" else 900)
     conf = [t for t in txs if t["status"]["confirmed"]]
     nxt = conf[-1]["txid"] if len(conf) >= 25 else None
+    if not cursor and len(txs) >= 25 and len(conf) < 25: nxt = conf[-1]["txid"] if conf else "__chain__"   # mempool-heavy first page
     return txs, nxt
 async def btc_address(a, cursor=None, f=None, to=None, pages=1):
-    out = {"chain": "btc", "address": a, "unit": "BTC"}
+    out = {"chain": "btc", "address": a, "unit": "BTC"}; await ensure_prices()
     if not cursor:
         info = await get(f"{MP}/address/{a}"); cs, ms = info["chain_stats"], info["mempool_stats"]
         out["balance"] = (cs["funded_txo_sum"] - cs["spent_txo_sum"] + ms["funded_txo_sum"] - ms["spent_txo_sum"]) / 1e8
@@ -323,21 +346,26 @@ async def _bs_stream(a, path, params):
     if params == "done": return [], "done"
     nk = f"{a}/{path}/{params}"
     if time.time() - NEG.get(nk, 0) < 3600: return [], "done"
-    try: d = await asyncio.wait_for(get(f"{BS}/addresses/{a}/{path}", ttl=LONG if params else 900, params=params or {}), 15 if "internal" in path else 40)
+    try: d = await asyncio.wait_for(get(f"{BS}/addresses/{a}/{path}", ttl=LONG if params else 900, params=params or {}), 8 if "internal" in path else 20)
     except Exception as ex:
         if path == "transactions": raise
         NEG[nk] = time.time(); WARN.append(f"blockscout {path} unavailable for {a[:10]}: {type(ex).__name__}"); return [], "done"
     return d.get("items", []), (d.get("next_page_params") or "done")
 async def eth_address(a, cursor=None, f=None, to=None, pages=1):
     out = {"chain": "eth", "unit": "ETH", "address": a}
-    if not cursor:
-        info = await get(f"{BS}/addresses/{a}"); out["address"] = a = info["hash"]
-        try: out["balance"] = int(await rpc(ETH_RPC, "eth_getBalance", [a, "latest"]), 16) / 1e18; out["balance_source"] = "rpc"
-        except Exception: out["balance"] = int(info.get("coin_balance") or 0) / 1e18; out["balance_source"] = "blockscout"
+    await ensure_prices()
+    async def _hdr():
+        async def opt(coro, t):
+            try: return await asyncio.wait_for(coro, t)
+            except Exception: return None
+        info, bal, cnt = await asyncio.gather(get(f"{BS}/addresses/{a}"), opt(rpc(ETH_RPC, "eth_getBalance", [a, "latest"]), 6),
+                                              opt(get(f"{BS}/addresses/{a}/counters"), 6))
+        out["address"] = info["hash"]
+        if bal: out["balance"] = int(bal, 16) / 1e18; out["balance_source"] = "rpc"
+        else: out["balance"] = int(info.get("coin_balance") or 0) / 1e18; out["balance_source"] = "blockscout"
         out["is_contract"] = info.get("is_contract")
-        try:
-            c = await get(f"{BS}/addresses/{a}/counters"); out["tx_count"] = c.get("transactions_count"); out["token_transfers_count"] = c.get("token_transfers_count")
-        except Exception: pass
+        if cnt: out["tx_count"] = cnt.get("transactions_count"); out["token_transfers_count"] = cnt.get("token_transfers_count")
+    hdr = asyncio.create_task(_hdr()) if not cursor else None   # runs concurrently with the history streams
     cur = dec(cursor) or {"t": None, "k": None, "i": None}
     al = a.lower(); ntags = {}; edges = []; hist = []
     def reg(x):
@@ -359,8 +387,10 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
             try: v = int(tot.get("value") or 0) / 10 ** int(tot.get("decimals") or tok.get("decimals") or 0)
             except Exception: v = 0
             sym = tok.get("symbol") or "TOKEN"
-            if fr and too: edges.append({"source": fr["hash"], "target": too["hash"], "amount": v, "tx": t.get("transaction_hash"), "unit": sym, "time": ts})
-            hist.append({"tx": t.get("transaction_hash"), "time": ts, "delta": v if (too and too["hash"].lower()==al) else -v, "unit": sym, "method": "token transfer"})
+            try: rate = float(tok.get("exchange_rate")) if tok.get("exchange_rate") else None
+            except Exception: rate = None
+            if fr and too: edges.append({"source": fr["hash"], "target": too["hash"], "amount": v, "tx": t.get("transaction_hash"), "unit": sym, "time": ts, "rate": rate})
+            hist.append({"tx": t.get("transaction_hash"), "time": ts, "delta": v if (too and too["hash"].lower()==al) else -v, "unit": sym, "method": "token transfer", "rate": rate})
         for t in it:
             fr, too = t.get("from"), t.get("to"); reg(fr); reg(too); ts = ts_of(t.get("timestamp")); times.append(ts)
             v = int(t.get("value") or 0) / 1e18
@@ -371,12 +401,13 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
         done = all(v == "done" for v in cur.values())
         if f and times and max(times) < f: done = True
         if done or hist: break
+    if hdr: await hdr; a = out["address"]
     out["nodes"], out["edges"], out["txs"] = _finish_page("eth", a, edges, hist, ntags)
     out["next"] = None if all(v == "done" for v in cur.values()) or (f and done) else enc(cur)
     return out
 
 async def sol_address(a, cursor=None, f=None, to=None, pages=1, limit=15):
-    out = {"chain": "sol", "address": a, "unit": "SOL"}
+    out = {"chain": "sol", "address": a, "unit": "SOL"}; await ensure_prices()
     if not cursor:
         out["balance"] = (await rpc(SOL, "getBalance", [a]))["value"] / 1e9
         try: tokens = await rpc(SOL, "getTokenAccountsByOwner", [a, {"programId":"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"}, {"encoding":"jsonParsed"}])
