@@ -14,10 +14,54 @@ def _load(f, dflt):
     try: return json.load(open(os.path.join(D, f)))
     except Exception: return dflt
 MODEL = _load("deposit_model.json", None)
-INF = _load("inferred_deposits.json", {"hubs": {}, "deposits": {}})
+# ---- inferred-label store: published as compact JSON-lines gzip, streamed into an on-disk SQLite (low RAM) ----
+import gzip, sqlite3, threading, tempfile
+PUB = os.path.join(D, "inferred_deposits.jsonl.gz")
+STORE = os.environ.get("CHAINTRACE_INFERRED_DB", os.path.join(tempfile.gettempdir(), "ct_inferred.sqlite"))
+_tl = threading.local(); _lock = threading.Lock()
+def build_store(src=PUB, dst=STORE):
+    """stream src (jsonl.gz, or legacy inferred_deposits.json) into SQLite; returns row count"""
+    tmp = dst + ".tmp"
+    if os.path.exists(tmp): os.remove(tmp)
+    db = sqlite3.connect(tmp); db.execute("CREATE TABLE inf(chain TEXT, addr TEXT, t TEXT, ent TEXT, p REAL, ev TEXT, PRIMARY KEY(chain,addr,t))"); n = 0
+    def put(c, a, t, e, p, ev):
+        nonlocal n; db.execute("INSERT OR REPLACE INTO inf VALUES(?,?,?,?,?,?)", (c, a, t, e, p, json.dumps(ev, separators=(",", ":")) if ev else None)); n += 1
+    if os.path.exists(src):
+        with gzip.open(src, "rt") as f:
+            for line in f:
+                if line.strip():
+                    r = json.loads(line); put(r["c"], r["a"], r["t"], r.get("e"), r.get("p"), r.get("ev"))
+    else:
+        old = _load("inferred_deposits.json", {})
+        for c, m in old.get("hubs", {}).items():
+            for a, e in m.items(): put(c, a, "hub", e, None, None)
+        for c, m in old.get("deposits", {}).items():
+            for a, (e, p, ev) in m.items(): put(c, a, "dep", e, p, ev)
+    db.commit(); db.close(); os.replace(tmp, dst); return n
+def _src_mtime():
+    for f in (PUB, os.path.join(D, "inferred_deposits.json")):
+        if os.path.exists(f): return os.path.getmtime(f)
+    return 0
+def _db():
+    if getattr(_tl, "db", None) is None:
+        with _lock:
+            if not os.path.exists(STORE) or os.path.getmtime(STORE) < _src_mtime():
+                try: build_store()
+                except Exception as ex: print("inferred store build failed:", ex)
+        _tl.db = sqlite3.connect(f"file:{STORE}?mode=ro", uri=True, check_same_thread=False) if os.path.exists(STORE) else False
+        if _tl.db: _tl.db.execute("PRAGMA cache_size=-1000")
+    return _tl.db
+def _q(chain, a, t):
+    db = _db()
+    if not db: return None
+    return db.execute("SELECT ent,p,ev FROM inf WHERE chain=? AND addr=? AND t=?", (chain, a, t)).fetchone()
+def stored_hub(chain, a):
+    r = _q(chain, a, "hub"); return r[0] if r else None
+def stored_dep(chain, a):
+    r = _q(chain, a, "dep"); return [r[0], r[1], json.loads(r[2]) if r[2] else {}] if r else None
 def reload():
-    global MODEL, INF
-    MODEL = _load("deposit_model.json", None); INF = _load("inferred_deposits.json", {"hubs": {}, "deposits": {}})
+    global MODEL
+    MODEL = _load("deposit_model.json", None); _tl.db = None
 def ent_of(rows):
     """normalised exchange entity from label-db rows"""
     for r in rows:
@@ -38,8 +82,7 @@ def hub(chain, a, extra_hubs=None):
     if ex: return ex.split(" ")[0]
     rows = [r for r in labels.db_labels(chain, a) if r["category"] == "exchange"]
     if rows and not any(is_deposit_row(r) for r in rows) and max(r["confidence"] for r in rows) >= 0.6: return ent_of(rows)
-    h = INF.get("hubs", {}).get(chain, {}).get(k)
-    return h
+    return stored_hub(chain, k)
 def exchange_any(chain, a):
     k = labels.norm(chain, a)
     if labels.EXCH.get(chain, {}).get(k): return True
@@ -88,7 +131,7 @@ def suggest(chain, a, d):
     """On-the-fly suggestion for an UNLABELLED address. Returns dict or None."""
     if chain not in NATIVE: return None
     k = labels.norm(chain, a)
-    pre = INF.get("deposits", {}).get(chain, {}).get(k)
+    pre = stored_dep(chain, k)
     if pre: return {"entity": pre[0], "confidence": pre[1], "evidence": pre[2], "method": "inferred (batch)"}
     r = features(chain, a, d)
     if not r: return None
@@ -106,5 +149,5 @@ def decorate(node, s, endpoint_at=0.85):
         node["kind"] = "exchange"; node["risk"] = min(node.get("risk") or 0, labels.RISK["exchange"]) or labels.RISK["exchange"]
     return node
 def lookup_batch(chain, a):
-    pre = INF.get("deposits", {}).get(chain, {}).get(labels.norm(chain, a))
+    pre = stored_dep(chain, labels.norm(chain, a))
     return {"entity": pre[0], "confidence": pre[1], "evidence": pre[2], "method": "inferred (batch)"} if pre else None

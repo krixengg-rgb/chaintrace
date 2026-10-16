@@ -179,3 +179,169 @@ def rescore():
         print(c, "inferred", len(got), collections.Counter(x[0] for x in got.values()).most_common(12))
     inf["generated"] = time.strftime("%Y-%m-%d"); json.dump(inf, open("data/inferred_deposits.json", "w"), separators=(",", ":"))
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "rescore": rescore()
+
+# =====================================================================================================
+# Large resumable scan:  python3 infer_deposits.py scan [--hours 30] [--new-round]
+# Checkpoints everything in data/depwork/scan.sqlite; safe to kill and re-run (resumes where it stopped).
+# Phases per chain (ETH and SOL run concurrently, each under its own polite concurrency):
+#   0 discover: fetch a sample of label-DB deposit addresses -> wallets they sweep into = collection hubs
+#   1 hubs:     every high-confidence verified exchange wallet (+ discovered hubs), prioritised by activity,
+#               paged deeper (ETH up to 25 pages, SOL up to 12) -> unlabelled senders = candidates
+#   2 score:    fetch each candidate, features + model + sanity gate -> inferred deposit label
+# Output for publishing: data/depwork/candidate.jsonl.gz (quality_gate.py decides whether it is published)
+# =====================================================================================================
+SCAN_DB = os.path.join(W, "scan.sqlite")
+MAJOR = ["Binance", "Coinbase", "OKX", "Kraken", "Bybit", "Bitget", "KuCoin", "Crypto.com", "MEXC", "Gate.io", "HTX", "Huobi", "Bitfinex", "Upbit", "Gemini", "Bitstamp", "Poloniex"]
+PAGES = {"eth": 25, "sol": 12}; DISCOVER = {"eth": 1500, "sol": 400}; SCONC = {"eth": 3, "sol": 1}
+_SDB = []
+def sdb():
+    if _SDB: return _SDB[0]       # one shared connection per process (asyncio is single-threaded)
+    db = sqlite3.connect(SCAN_DB, timeout=60); _SDB.append(db); db.execute("PRAGMA journal_mode=WAL")
+    db.executescript("""CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
+    CREATE TABLE IF NOT EXISTS disc(chain TEXT, addr TEXT, ent TEXT, status TEXT DEFAULT 'pending', tries INT DEFAULT 0, targets TEXT, PRIMARY KEY(chain,addr));
+    CREATE TABLE IF NOT EXISTS hubs(chain TEXT, addr TEXT, ent TEXT, src TEXT, prio REAL, cursor TEXT, pages INT DEFAULT 0, status TEXT DEFAULT 'pending', tries INT DEFAULT 0, PRIMARY KEY(chain,addr));
+    CREATE TABLE IF NOT EXISTS cands(chain TEXT, addr TEXT, hub TEXT, status TEXT DEFAULT 'pending', tries INT DEFAULT 0, seen REAL, PRIMARY KEY(chain,addr));
+    CREATE TABLE IF NOT EXISTS results(chain TEXT, addr TEXT, ent TEXT, p REAL, ev TEXT, scored REAL, PRIMARY KEY(chain,addr));
+    CREATE TABLE IF NOT EXISTS rejects(chain TEXT, addr TEXT, reason TEXT, p REAL, PRIMARY KEY(chain,addr));""")
+    return db
+def meta(db, k, v=None):
+    if v is None: r = db.execute("SELECT v FROM meta WHERE k=?", (k,)).fetchone(); return r[0] if r else None
+    db.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", (k, str(v))); db.commit()
+def slog(*a):
+    line = time.strftime("%Y-%m-%d %H:%M:%S ") + " ".join(str(x) for x in a)
+    print(line, flush=True)
+    with open(os.path.join(W, "scan.log"), "a") as f: f.write(line + "\n")
+def scan_init(db, new_round=False):
+    if meta(db, "init") and not new_round: return
+    for c in ("eth", "sol"):
+        # phase-0 sample of known deposit addresses (stratified across exchanges)
+        rows = positives(c); by = collections.defaultdict(list)
+        for a, e, n in rows: by[dep.ent_of([{"entity": e, "name": n}])].append(a)
+        pick = []; i = 0
+        while len(pick) < DISCOVER[c] and any(len(v) > i for v in by.values()):
+            for ent, v in by.items():
+                if len(v) > i: pick.append((v[i], ent))
+            i += 1
+        db.executemany("INSERT OR IGNORE INTO disc(chain,addr,ent) VALUES(?,?,?)", [(c, labels.norm(c, a), e) for a, e in pick[:DISCOVER[c]]])
+        # verified high-confidence exchange wallets of major exchanges (not deposit addresses)
+        hubs = {labels.norm(c, k): (v.split(" ")[0], "builtin", 1000) for k, v in labels.EXCH.get(c, {}).items()}
+        for a, ent, name, conf in DB.execute("select address,entity,name,confidence from labels where chain=? and category='exchange' and confidence>=0.6", (c,)):
+            r = {"entity": ent, "name": name}
+            if dep.is_deposit_row(r) or any(w in (name or "").lower() for w in ("funder", "deployer", "token", "contract", "proxy", "fee", "multisig", "cold", "eth2")): continue
+            e = dep.ent_of([r])
+            if e in MAJOR or (e or "").replace(".Io", ".io") in MAJOR: hubs.setdefault(labels.norm(c, a), (e, "label-db", 10))
+        old = dep._load("inferred_deposits.json", {})
+        for a, e in old.get("hubs", {}).get(c, {}).items(): hubs.setdefault(a, (e, "learned", 50))
+        for a, (e, s, p) in hubs.items():
+            db.execute("INSERT INTO hubs(chain,addr,ent,src,prio) VALUES(?,?,?,?,?) ON CONFLICT(chain,addr) DO UPDATE SET status='pending',pages=0,cursor=NULL,tries=0" if new_round else
+                       "INSERT OR IGNORE INTO hubs(chain,addr,ent,src,prio) VALUES(?,?,?,?,?)", (c, a, e, s, p))
+        for a, (e, p, ev) in old.get("deposits", {}).get(c, {}).items():
+            db.execute("INSERT OR IGNORE INTO results VALUES(?,?,?,?,?,?)", (c, a, e, p, json.dumps(ev), time.time()))
+    db.commit(); meta(db, "init", time.time()); meta(db, "round_started", time.strftime("%Y-%m-%d %H:%M")); meta(db, "state", "running")
+def hubmap(db, c): return {a: e for a, e in db.execute("SELECT addr,ent FROM hubs WHERE chain=?", (c,))}
+async def scan_chain(c, deadline, model):
+    db = sdb(); sem = asyncio.Semaphore(SCONC[c]); fails = [0]
+    async def fetch(a, cursor=None):
+        for i in range(4):
+            try:
+                async with sem: return await asyncio.wait_for(chains.ADDR[c](a, cursor=cursor) if cursor else chains.ADDR[c](a), 90)
+            except Exception as ex:
+                fails[0] += 1; msg = str(ex)
+                if i == 3: raise
+                await asyncio.sleep(min(300, 10 * 2 ** i) if ("429" in msg or "rate" in msg.lower()) else 3 * (i + 1))   # exponential backoff
+    def left(): return deadline - time.time()
+    # ---- phase 0: discover collection hubs from known deposit addresses
+    while left() > 0:
+        todo = db.execute("SELECT addr,ent FROM disc WHERE chain=? AND status='pending' AND tries<3 LIMIT 30", (c,)).fetchall()
+        if not todo: break
+        async def one(a, ent):
+            try:
+                d = await fetch(a); tg = sorted({labels.norm(c, e["target"]) for e in d["edges"] if labels.norm(c, e["source"]) == a and labels.norm(c, e["target"]) != a})
+                db.execute("UPDATE disc SET status='done',targets=? WHERE chain=? AND addr=?", (json.dumps(tg), c, a))
+            except Exception: db.execute("UPDATE disc SET tries=tries+1 WHERE chain=? AND addr=?", (c, a))
+        await asyncio.gather(*[one(a, e) for a, e in todo]); db.commit()
+        n = db.execute("SELECT count(*) FROM disc WHERE chain=? AND status='done'", (c,)).fetchone()[0]; slog(c, "discover", n, "deposit addrs fetched")
+    rec = collections.defaultdict(collections.Counter)
+    for a, ent, tg in db.execute("SELECT addr,ent,targets FROM disc WHERE chain=? AND status='done'", (c,)):
+        for t in json.loads(tg or "[]"): rec[t][ent] += 1
+    deps = {a for (a,) in db.execute("SELECT addr FROM disc WHERE chain=?", (c,))}
+    for t, cnt in rec.items():
+        tot = sum(cnt.values())
+        if tot < 3 or t in deps: continue
+        rows = labels.db_labels(c, t)
+        if any(dep.is_deposit_row(r) for r in rows) or any(r["category"] not in ("exchange", "other") for r in rows): continue
+        ent, k = cnt.most_common(1)[0]
+        if k / tot < 0.8: continue                                    # hub must be dominated by one exchange
+        db.execute("INSERT INTO hubs(chain,addr,ent,src,prio) VALUES(?,?,?,?,?) ON CONFLICT(chain,addr) DO UPDATE SET prio=max(prio,excluded.prio)", (c, t, ent, "discovered", 100 + tot))
+    db.commit()
+    # ---- phases 1+2 interleaved: page one hub, then score its new candidates (so progress is spread over exchanges)
+    hm = hubmap(db, c); m = (model.get("per_chain") or {}).get(c) or dep.PRIOR
+    while left() > 0:
+        h = db.execute("SELECT addr,ent,cursor,pages FROM hubs WHERE chain=? AND status='pending' AND tries<3 ORDER BY prio DESC, pages ASC LIMIT 1", (c,)).fetchone()
+        cands = db.execute("SELECT addr FROM cands WHERE chain=? AND status='pending' AND tries<3 LIMIT 60", (c,)).fetchall()
+        if not h and not cands: break
+        if h and len(cands) < 30:
+            a, ent, cur, pg = h
+            try:
+                d = await fetch(a, cur); nxt = d.get("next"); new = 0
+                for e in d["edges"]:
+                    s = labels.norm(c, e["source"])
+                    if labels.norm(c, e["target"]) != a or s in hm or labels.db_labels(c, s) or labels.EXCH.get(c, {}).get(s): continue
+                    new += db.execute("INSERT OR IGNORE INTO cands(chain,addr,hub,seen) VALUES(?,?,?,?)", (c, s, a, time.time())).rowcount
+                pg += 1; done = (not nxt) or pg >= PAGES[c]
+                db.execute("UPDATE hubs SET cursor=?,pages=?,status=?,prio=prio*0.97 WHERE chain=? AND addr=?", (nxt, pg, "done" if done else "pending", c, a))
+            except Exception as ex:
+                db.execute("UPDATE hubs SET tries=tries+1 WHERE chain=? AND addr=?", (c, a)); slog(c, "hub error", a[:12], str(ex)[:80])
+            db.commit(); continue
+        async def score(a):
+            try:
+                d = await fetch(a); r = dep.features(c, a, mini(d), hm)
+                if r:
+                    f, ent, ev = r; p = dep.prob(f, m); g = dep.gate(ev)
+                    if p >= 0.6 and not g:
+                        db.execute("INSERT OR REPLACE INTO results VALUES(?,?,?,?,?,?)", (c, a, ent, round(p, 3), json.dumps({k: ev[k] for k in ("hub", "sweeps", "outflows", "out_counterparties", "in_senders", "gas_topup_from_exchange", "usd_swept")}), time.time()))
+                    else: db.execute("INSERT OR REPLACE INTO rejects VALUES(?,?,?,?)", (c, a, g or "low score", round(p, 3)))
+                else: db.execute("INSERT OR REPLACE INTO rejects VALUES(?,?,?,?)", (c, a, "no exchange sweep", 0))
+                db.execute("UPDATE cands SET status='done' WHERE chain=? AND addr=?", (c, a))
+            except Exception: db.execute("UPDATE cands SET tries=tries+1 WHERE chain=? AND addr=?", (c, a))
+        await asyncio.gather(*[score(a) for (a,) in cands]); db.commit()
+        st = dict(db.execute("SELECT status,count(*) FROM cands WHERE chain=? GROUP BY 1", (c,)).fetchall())
+        hs = dict(db.execute("SELECT status,count(*) FROM hubs WHERE chain=? GROUP BY 1", (c,)).fetchall())
+        slog(c, f"hubs {hs} cands {st} results {db.execute('SELECT count(*) FROM results WHERE chain=?', (c,)).fetchone()[0]} fetch-retries {fails[0]} left {int(left()/60)}min")
+    finished = not db.execute("SELECT 1 FROM hubs WHERE chain=? AND status='pending' AND tries<3 UNION SELECT 1 FROM cands WHERE chain=? AND status='pending' AND tries<3", (c, c)).fetchone()
+    meta(db, f"finished_{c}", int(finished)); slog(c, "phase end; finished" if finished else "time budget used; will resume next run")
+def export_candidate(db=None):
+    db = db or sdb(); import gzip; out = os.path.join(W, "candidate.jsonl.gz"); n = collections.Counter()
+    with gzip.open(out + ".tmp", "wt") as f:
+        for c, a, e in db.execute("SELECT chain,addr,ent FROM hubs WHERE src IN ('discovered','learned')"):
+            f.write(json.dumps({"c": c, "a": a, "t": "hub", "e": e}, separators=(",", ":")) + "\n")
+        for c, a, e, p, ev in db.execute("SELECT chain,addr,ent,p,ev FROM results"):
+            f.write(json.dumps({"c": c, "a": a, "t": "dep", "e": e, "p": p, "ev": json.loads(ev)}, separators=(",", ":")) + "\n"); n[c] += 1
+    os.replace(out + ".tmp", out); slog("exported candidate", dict(n), f"{os.path.getsize(out)//1024} KB"); return out
+async def scan(hours, new_round):
+    db = sdb(); scan_init(db, new_round); deadline = time.time() + hours * 3600
+    meta(db, "deadline", time.strftime("%Y-%m-%d %H:%M", time.localtime(deadline))); meta(db, "pid", os.getpid())
+    slog("scan start; budget", hours, "h; round", meta(db, "round_started"))
+    model = dep._load("deposit_model.json", {})
+    await asyncio.gather(scan_chain("eth", deadline, model), scan_chain("sol", deadline, model))
+    if meta(db, "finished_eth") == "1" and meta(db, "finished_sol") == "1": meta(db, "state", "finished")
+    export_candidate(db); slog("scan exit; state", meta(db, "state"))
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "scan":
+    hrs = float(sys.argv[sys.argv.index("--hours") + 1]) if "--hours" in sys.argv else 30
+    asyncio.run(scan(hrs, "--new-round" in sys.argv))
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "export": export_candidate()
+def eval_only():
+    """held-out precision/recall at 0.85 with the same split/procedure as train(), writing nothing."""
+    res = {}
+    for c in ("eth", "sol"):
+        raw = {a: v for a, v in load_raw(c).items() if not v.get("error") and v.get("tag") in ("pos", "neg")}
+        pos = [a for a, v in raw.items() if v["tag"] == "pos"]; neg = [a for a, v in raw.items() if v["tag"] == "neg"]
+        rnd = random.Random(3); rnd.shuffle(pos); rnd.shuffle(neg)
+        k1, k2 = int(len(pos) * .7), int(len(neg) * .7); hubs = learn_hubs(c, raw, pos[:k1])
+        Xp, yp, _ = Xy(c, raw, pos[:k1], 1, hubs); Xn, yn, _ = Xy(c, raw, neg[:k2], 0, hubs)
+        Xtr = [x[0] for x in Xp + Xn if x is not None]; ytr = [t for x, t in zip(Xp + Xn, yp + yn) if x is not None]
+        hard = sum(1 for t in ytr if t == 0)
+        m = fit(Xtr, ytr) if hard >= 20 else dict(dep.PRIOR)
+        Tp, a1, _ = Xy(c, raw, pos[k1:], 1, hubs); Tn, a2, _ = Xy(c, raw, neg[k2:], 0, hubs)
+        res[c] = evaluate(Tp + Tn, a1 + a2, m, 0.85)
+    return res
