@@ -75,6 +75,21 @@ a{color:#9fb4ff;text-decoration:none}a:hover{text-decoration:underline}
 .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 .menu{position:relative}.menu .dd{position:absolute;right:0;top:110%;display:none;flex-direction:column;gap:4px;padding:6px;z-index:20;min-width:150px}
 .menu.open .dd{display:flex}.dd .btn{text-align:left}
+#drawer{position:fixed;left:12px;top:12px;bottom:12px;width:340px;z-index:40;padding:14px;display:flex;flex-direction:column;gap:10px;transform:translateX(-110%);transition:transform .25s ease;background:rgba(14,19,32,.92)}
+#drawer.open{transform:none}#drawer h2{margin:0;font-size:16px;display:flex;align-items:center;gap:8px}#drawer h2 .sp{flex:1}
+#caselist{overflow:auto;display:flex;flex-direction:column;gap:8px;flex:1}
+.citem{padding:10px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.03)}.citem.cur{border-color:rgba(124,92,255,.7);background:rgba(124,92,255,.1)}
+.citem .nm{font-weight:650;cursor:pointer}.citem .acts{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
+#caseChip{font-size:12px;color:var(--mut);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#caseChip b{color:var(--txt)}
+textarea{width:100%;min-height:64px;background:rgba(0,0,0,.25);border:1px solid var(--line);border-radius:10px;color:var(--txt);padding:8px;font:13px/1.4 var(--font);resize:vertical;outline:0}
+textarea:focus,.lblrow input:focus{border-color:rgba(124,92,255,.6)}
+.lblrow{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;font-size:12px}
+.lblrow input[type=text],.lblrow select{background:rgba(0,0,0,.25);border:1px solid var(--line);border-radius:8px;padding:5px 7px;color:var(--txt);outline:0}
+.lblrow input[type=text]{flex:1;min-width:120px}
+.eptab td{font-size:12px}.eptab tr{cursor:pointer}
+.stop{font-size:12px;padding:6px 9px;border-radius:9px;background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.25);margin-top:10px}
+@media (max-width:900px){#drawer{left:0;top:0;bottom:0;width:100%;border-radius:0}}
 @media (max-width:900px){
  body{overflow:auto;height:auto;min-height:100%}
  header{padding:10px}.brand small{display:none}.search{min-width:100%;order:3}
@@ -86,18 +101,23 @@ a{color:#9fb4ff;text-decoration:none}a:hover{text-decoration:underline}
 }
 </style></head><body>
 <header>
+ <button class="btn ico" id="casesbtn" title="Cases" onclick="toggleCases()">☰</button>
  <div class="brand"><i>⛓</i>ChainTrace <small>BTC · ETH · SOL fund tracing</small></div>
  <div class="search glass">
   <span id="chainBadge" class="badge">AUTO</span>
   <input id="q" autocomplete="off" spellcheck="false" placeholder="Paste a Bitcoin, Ethereum or Solana address / tx hash">
   <button class="btn pri" id="gobtn" onclick="go()">Trace</button>
  </div>
+ <span id="caseChip">No case open</span><button class="btn" id="savebtn" onclick="saveToCase()">💾 Save case</button>
 </header>
 <div class="controls">
  <div class="seg glass">Hops <select id="hops"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select>
   <select id="dir"><option value="forward">→ forward</option><option value="backward">← backward</option><option value="both">⇄ both</option></select>
   top-K <select id="topk"><option>2</option><option selected>3</option><option>5</option><option>8</option></select></div>
  <button class="btn pri" id="tracebtn" onclick="traceN()">Trace N hops</button>
+ <div class="seg glass">Auto: hops <select id="amax"><option>3</option><option>4</option><option>5</option><option selected>6</option><option>7</option><option>8</option></select>
+  min $<input id="amin" type="number" value="100" min="0" step="50" style="width:70px"></div>
+ <button class="btn pri" id="autobtn" onclick="autoTrace()">⚡ AutoTrace</button>
  <button class="btn danger" id="cancelbtn" onclick="cancelTrace()" style="display:none">Cancel</button>
  <div class="seg glass">From <input type="date" id="df"> To <input type="date" id="dt"></div>
  <div class="menu" id="exportMenu"><button class="btn" onclick="exportMenu.classList.toggle('open')">Export ▾</button>
@@ -116,9 +136,14 @@ a{color:#9fb4ff;text-decoration:none}a:hover{text-decoration:underline}
    <button class="btn" title="Re-layout" onclick="relayout()">⟳</button><button class="btn" title="Clear highlight" onclick="clearHl()">◌</button></div>
   <div class="legend glass" id="legend"></div>
  </div>
- <aside><div id="side"></div><div id="det"></div></aside>
+ <aside><div id="casecard"></div><div id="side"></div><div id="det"></div></aside>
 </main>
 <div class="toast glass" id="toast"></div>
+<div id="drawer" class="glass"><h2>Cases<span class="sp"></span><button class="btn sm" onclick="newCaseUI()">＋ New</button>
+ <button class="btn sm" onclick="$('impfile').click()">Import</button><button class="btn sm" onclick="toggleCases(false)">✕</button></h2>
+ <input type="file" id="impfile" accept=".json,application/json" multiple style="display:none" onchange="importCases(this.files);this.value=''">
+ <div class="dim" style="font-size:12px">Stored in this browser (IndexedDB). Export cases to keep a copy or move them to another device.</div>
+ <div id="caselist"></div></div>
 <script>
 // ---------- constants ----------
 const CAT={sanctioned:['#ff4d6d','⊘','Sanctioned'],terrorism:['#ff2e63','☠','Terrorism'],darknet:['#e0115f','☠','Darknet'],ransomware:['#e0115f','🔒','Ransomware'],
@@ -154,17 +179,20 @@ $('legend').innerHTML=Object.entries(CAT).filter(([k])=>!['terrorism','ransomwar
 const ew=e=>{const u=e.data('usd');return u?Math.min(9,1.2+1.25*Math.log10(1+u/50)):1.4};
 const cy=cytoscape({container:$('cy'),wheelSensitivity:.25,minZoom:.08,maxZoom:4,style:[
  {selector:'node',style:{'background-color':e=>(CAT[e.data('kind')]||['#3a4360'])[0],'background-image':e=>icon(e.data('kind')),'background-fit':'cover','background-opacity':1,
-  width:e=>e.data('focus')?44:28,height:e=>e.data('focus')?44:28,label:'data(lbl)',color:'#c9d2e6','font-size':9,'font-family':'ui-sans-serif,Segoe UI,Arial','text-valign':'bottom','text-margin-y':5,
+  width:e=>e.data('focus')?44:28,height:e=>e.data('focus')?44:28,label:e=>(e.data('note')?'✎ ':'')+(e.data('lbl')||''),color:'#c9d2e6','font-size':9,'font-family':'ui-sans-serif,Segoe UI,Arial','text-valign':'bottom','text-margin-y':5,
   'text-background-color':'#070a12','text-background-opacity':.55,'text-background-padding':2,'text-background-shape':'roundrectangle','border-width':e=>e.data('focus')?3:1.5,
   'border-color':e=>e.data('focus')?'#fff':'rgba(255,255,255,.25)','overlay-opacity':0,'transition-property':'border-width,border-color,opacity','transition-duration':'.2s'}},
  {selector:'node[!kind]',style:{'background-image':'none','background-color':'#3a4360'}},
  {selector:'node[kind="tx"]',style:{shape:'round-rectangle'}},
  {selector:'edge',style:{width:ew,'line-color':'rgba(130,150,200,.38)','target-arrow-color':'rgba(130,150,200,.6)','target-arrow-shape':'triangle','arrow-scale':.9,'curve-style':'bezier',
-  label:'data(lbl)','font-size':7,color:'#7f8aa6','text-rotation':'autorotate','text-background-color':'#070a12','text-background-opacity':.6,'text-background-padding':1.5,'transition-property':'line-color,width,opacity','transition-duration':'.25s'}},
+  label:e=>(e.data('note')?'✎ ':'')+(e.data('lbl')||''),'font-size':7,color:'#7f8aa6','text-rotation':'autorotate','text-background-color':'#070a12','text-background-opacity':.6,'text-background-padding':1.5,'transition-property':'line-color,width,opacity','transition-duration':'.25s'}},
  {selector:'edge.hot',style:{'line-color':'#ff4d6d','target-arrow-color':'#ff4d6d',color:'#ffc2cd','z-index':9,'line-style':'solid',width:e=>ew(e)+1.6}},
  {selector:'edge.hotx',style:{'line-color':'#4c8dff','target-arrow-color':'#4c8dff','z-index':8,width:e=>ew(e)+1}},
  {selector:'node.hot',style:{'border-width':4,'border-color':'#ff4d6d'}},
  {selector:'.faded',style:{opacity:.18}},
+ {selector:'node[note]',style:{'border-color':'#f6c945','border-width':3,'border-style':'dashed'}},
+ {selector:'edge[note]',style:{'line-style':'dashed','line-color':'#f6c945','target-arrow-color':'#f6c945',color:'#f6dd8a'}},
+ {selector:'node[custom]',style:{'text-outline-color':'#7c5cff','color':'#e3dcff'}},
  {selector:':selected',style:{'border-width':4,'border-color':'#f6c945'}}]});
 const lay=()=>({name:'cose',animate:true,animationDuration:550,randomize:false,nodeRepulsion:()=>12000,idealEdgeLength:()=>120,edgeElasticity:()=>80,gravity:.35,numIter:1200,padding:40,nodeDimensionsIncludeLabels:true});
 function relayout(){cy.layout(lay()).run()}
@@ -178,7 +206,7 @@ function add(d,focus){const els=[],ids=new Set();$('empty').style.display='none'
  for(const e of d.edges){const id=e.source+'>'+e.target+(e.unit||'');if(cy.getElementById(id).length)continue;
   const has=x=>ids.has(x)||cy.getElementById(x).length;if(!has(e.source)||!has(e.target))continue;
   els.push({group:'edges',data:{id,source:e.source,target:e.target,usd:e.usd||0,lbl:fmt(e.amount,4)+' '+(e.unit||d.unit||'')+(e.usd?' · '+usd(e.usd):'')+(e.count>1?' ×'+e.count:''),info:e}})}
- cy.add(els);if(els.length)relayout()}
+ cy.add(els);if(els.length){applyCaseDecor();relayout();autosave()}}
 // ---------- API ----------
 const dts=()=>{const f=$('df').value,t=$('dt').value;let s='';if(f)s+='&date_from='+Math.floor(Date.parse(f)/1000);if(t)s+='&date_to='+(Math.floor(Date.parse(t)/1000)+86399);return s};
 async function api(q,cursor){busy(true,'Loading '+short(q)+'…');
@@ -186,6 +214,7 @@ async function api(q,cursor){busy(true,'Loading '+short(q)+'…');
   if(!r.ok){busy(false,'Error: '+(j.detail||r.status));toast(j.detail||'Error');throw j}busy(false,'');return j}catch(e){busy(false,$('stxt').textContent||'Network error');throw e}}
 function skeleton(){$('side').innerHTML=`<div class="card glass"><div class="sk" style="width:60%"></div><div class="sk" style="height:46px"></div><div class="sk" style="width:80%"></div></div><div class="card glass"><div class="sk"></div><div class="sk"></div><div class="sk"></div><div class="sk"></div></div>`}
 function share(extra){const p=new URLSearchParams();const q=$('q').value.trim();if(q)p.set('q',q);
+ if(mode==='auto'){p.set('mode','auto');p.set('dir',$('dir').value);p.set('amax',$('amax').value);p.set('amin',$('amin').value);p.set('topk',$('topk').value)}
  if(mode==='trace'){p.set('mode','trace');p.set('hops',$('hops').value);p.set('dir',$('dir').value);p.set('topk',$('topk').value)}
  if($('df').value)p.set('from',$('df').value);if($('dt').value)p.set('to',$('dt').value);history.replaceState(null,'','?'+p.toString())}
 function demo(a){$('q').value=a;setBadge();go()}
@@ -203,11 +232,11 @@ async function traceN(){const q=$('q').value.trim();if(!q)return;mode='trace';sh
  job=j.job;$('tracebtn').disabled=true;$('cancelbtn').style.display='';busy(true,'Trace queued…');poll(job)}
 async function cancelTrace(){if(!job)return;await fetch('/api/trace/'+job,{method:'DELETE'});toast('Cancelling…')}
 async function poll(id){let r;try{r=await fetch('/api/trace/'+id)}catch(e){setTimeout(()=>poll(id),2500);return}if(id!==job)return;
- if(!r.ok){busy(false,r.status===404?'Trace lost (server restarted or slept) — please run it again':'Trace poll error '+r.status);$('tracebtn').disabled=false;$('cancelbtn').style.display='none';return}
+ if(!r.ok){busy(false,r.status===404?'Trace lost (server restarted or slept) — please run it again':'Trace poll error '+r.status);$('tracebtn').disabled=false;$('autobtn').disabled=false;$('cancelbtn').style.display='none';return}
  const j=await r.json();add({nodes:j.nodes,edges:j.edges,unit:''},j.root);
  if(j.status==='running'||j.status==='queued'){busy(true,`Trace ${j.status}: ${j.progress} · ${j.nodes.length} nodes`+(j.capped?' (capped)':''));setTimeout(()=>poll(id),1300);return}
  busy(false,`trace ${j.status}: ${j.progress} · ${j.nodes.length} nodes`+(j.capped?' (capped)':''));
- $('tracebtn').disabled=false;$('cancelbtn').style.display='none';lastTrace=j;window.lastTrace=j;highlight(j);renderTrace(j);cy.animate({fit:{padding:40}},{duration:400})}
+ $('tracebtn').disabled=false;$('autobtn').disabled=false;$('cancelbtn').style.display='none';lastTrace=j;window.lastTrace=j;highlight(j);(j.type==='autotrace'?renderAuto:renderTrace)(j);autosave();cy.animate({fit:{padding:40}},{duration:400})}
 function highlight(j){cy.elements().removeClass('hot hotx');for(const p of j.paths||[]){const h=HIGH.includes(p.kind);
  for(const e of p.edges)cy.getElementById(e[0]+'>'+e[1]+(e[2]||'')).addClass(h?'hot':'hotx');if(h)p.nodes.forEach(n=>cy.getElementById(n).addClass('hot'))}}
 function focusPath(i){const p=lastTrace.paths[i];const c=cy.collection();p.nodes.forEach(n=>c.merge(cy.getElementById(n)));
@@ -257,12 +286,100 @@ function exportCSV(){const rows=[['source','target','amount','unit','usd','count
  cy.edges().forEach(e=>{const x=e.data('info');const sl=cy.getElementById(x.source).data('info')||{},tl=cy.getElementById(x.target).data('info')||{};
   rows.push([x.source,x.target,x.amount,x.unit||'',x.usd||'',x.count||1,x.tx||'',(sl.kind||'')+(sl.name?':'+sl.name:''),(tl.kind||'')+(tl.name?':'+tl.name:'')])});
  dl(base()+'-flows.csv',new Blob([rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'}))}
-function exportJSON(){const o={query:$('q').value.trim(),exported:new Date().toISOString(),mode,trace:mode==='trace'?lastTrace:null,lookup:mode==='lookup'?cur:null,
+function exportJSON(){if(curCase)return exportCase();const o={query:$('q').value.trim(),exported:new Date().toISOString(),mode,trace:mode==='trace'?lastTrace:null,lookup:mode==='lookup'?cur:null,
  nodes:cy.nodes().map(n=>n.data('info')),edges:cy.edges().map(e=>e.data('info'))};dl(base()+'.json',new Blob([JSON.stringify(o,null,1)],{type:'application/json'}))}
 function copyLink(){share();copy(location.href);exportMenu.classList.remove('open')}
 document.addEventListener('click',e=>{if(!exportMenu.contains(e.target))exportMenu.classList.remove('open')});
+// ---------- case storage (interface: list/get/put/del; swap for a hosted DB later) ----------
+const IDBStore=(()=>{let dbp;const db=()=>dbp||(dbp=new Promise((res,rej)=>{const r=indexedDB.open('chaintrace',1);
+ r.onupgradeneeded=()=>r.result.createObjectStore('cases',{keyPath:'id'});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}));
+ const tx=async(mode,fn)=>{const d=await db();return new Promise((res,rej)=>{const t=d.transaction('cases',mode);const r=fn(t.objectStore('cases'));t.oncomplete=()=>res(r&&r.result);t.onerror=()=>rej(t.error)})};
+ return {kind:'indexeddb',list:async()=>(await tx('readonly',s=>s.getAll()))||[],get:id=>tx('readonly',s=>s.get(id)),put:c=>tx('readwrite',s=>s.put(c)),del:id=>tx('readwrite',s=>s.delete(id))}})();
+const LSStore={kind:'localstorage',list:async()=>JSON.parse(localStorage.ct_cases||'[]'),get:async id=>(await LSStore.list()).find(c=>c.id===id),
+ put:async c=>{const l=(await LSStore.list()).filter(x=>x.id!==c.id);l.push(c);localStorage.ct_cases=JSON.stringify(l)},del:async id=>{localStorage.ct_cases=JSON.stringify((await LSStore.list()).filter(x=>x.id!==id))}};
+let Store=window.indexedDB?IDBStore:LSStore;
+let curCase=null,restoring=false;
+const uid=()=>(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2)).slice(0,18);
+const GL=()=>{try{return JSON.parse(localStorage.ct_labels||'{}')}catch(e){return{}}};
+function snapshot(){return{query:$('q').value.trim(),mode,params:{hops:$('hops').value,dir:$('dir').value,topk:$('topk').value,amax:$('amax').value,amin:$('amin').value,df:$('df').value,dt:$('dt').value},
+ graph:{nodes:cy.nodes().map(n=>({data:n.data(),position:n.position()})),edges:cy.edges().map(e=>e.data())},
+ lookup:mode==='lookup'?cur:null,trace:mode!=='lookup'?lastTrace:null,risk:(mode==='lookup'?cur?.risk:lastTrace?.risk)||null}}
+function blankCase(name){const t=Date.now();return{id:uid(),name:name||'Untitled case',created:t,updated:t,notes:{case:'',nodes:{},edges:{}},labels:{},...snapshot()}}
+async function persist(){if(!curCase||restoring)return;Object.assign(curCase,snapshot(),{updated:Date.now()});
+ try{await Store.put(curCase)}catch(e){if(Store!==LSStore){Store=LSStore;await Store.put(curCase)}else toast('Save failed: '+e)}chip();if($('drawer').classList.contains('open'))listCases()}
+let _as;function autosave(){if(!curCase||restoring)return;clearTimeout(_as);_as=setTimeout(persist,700)}
+function chip(){$('caseChip').innerHTML=curCase?'Case: <b>'+esc(curCase.name)+'</b> · saved '+new Date(curCase.updated).toLocaleTimeString():'No case open'}
+async function ensureCase(){if(curCase)return curCase;curCase=blankCase(defaultName());await Store.put(curCase);chip();caseCard();toast('Created case “'+curCase.name+'”');return curCase}
+const defaultName=()=>{const q=$('q').value.trim();return(mode==='auto'?'AutoTrace ':mode==='trace'?'Trace ':'Case ')+(q?short(q):new Date().toLocaleString())};
+async function saveToCase(){if(!curCase){const n=prompt('Case name',defaultName());if(n===null)return;curCase=blankCase(n)}await persist();caseCard();toast('Saved “'+curCase.name+'”')}
+async function newCaseUI(){const n=prompt('New case name','Untitled case');if(n===null)return;cy.elements().remove();$('side').innerHTML='';$('det').innerHTML='';$('q').value='';setBadge();
+ cur=null;lastTrace=null;mode='lookup';$('empty').style.display='';curCase=blankCase(n);await Store.put(curCase);chip();caseCard();listCases();toggleCases(false)}
+function caseCard(){if(!curCase){$('casecard').innerHTML='';return}$('casecard').innerHTML=`<div class="card glass"><h3>📁 ${esc(curCase.name)}<span class="sp"></span><span class="dim" style="text-transform:none;letter-spacing:0">${Object.keys(curCase.notes.nodes).length+Object.keys(curCase.notes.edges).length} notes · ${Object.keys(curCase.labels).length} labels</span></h3>
+ <textarea id="caseNote" placeholder="Case notes (summary, hypotheses, next steps)…">${esc(curCase.notes.case||'')}</textarea></div>`;
+ $('caseNote').oninput=e=>{curCase.notes.case=e.target.value;autosave()}}
+async function openCase(id){const c=await Store.get(id);if(!c)return toast('Case not found');restoring=true;curCase=c;if(innerWidth<900)toggleCases(false);
+ cy.elements().remove();expanded.clear();$('det').innerHTML='';$('empty').style.display=c.graph.nodes.length?'none':'';
+ cy.add(c.graph.nodes.map(n=>({group:'nodes',data:n.data,position:n.position})));cy.add(c.graph.edges.map(d=>({group:'edges',data:d})));
+ c.graph.nodes.forEach(n=>chainOf[n.data.id]=n.data.info?.chain);cy.layout({name:'preset'}).run();cy.fit(undefined,40);
+ $('q').value=c.query||'';setBadge();const p=c.params||{};for(const k of['hops','dir','topk','amax','amin'])if(p[k])$(k).value=p[k];$('df').value=p.df||'';$('dt').value=p.dt||'';
+ mode=c.mode||'lookup';cur=c.lookup;lastTrace=c.trace;window.lastTrace=lastTrace;
+ if(lastTrace&&mode!=='lookup'){highlight(lastTrace);(lastTrace.type==='autotrace'?renderAuto:renderTrace)(lastTrace)}else if(cur)render(cur);else $('side').innerHTML='';
+ applyCaseDecor();caseCard();chip();restoring=false;toggleCases(false);history.replaceState(null,'','?case='+encodeURIComponent(id));toast('Opened “'+c.name+'”')}
+async function listCases(){const l=(await Store.list()).sort((a,b)=>b.updated-a.updated);
+ $('caselist').innerHTML=l.length?l.map(c=>`<div class="citem ${curCase&&curCase.id===c.id?'cur':''}"><div class="nm" onclick="openCase('${c.id}')">${esc(c.name)}</div>
+ <div class="dim" style="font-size:11px">${new Date(c.updated).toLocaleString()} · ${c.graph?.nodes?.length||0} nodes · ${c.mode||'lookup'}${c.risk?' · risk '+c.risk.score:''}</div>
+ <div class="acts"><button class="btn sm" onclick="openCase('${c.id}')">Open</button><button class="btn sm" onclick="renameCase('${c.id}')">Rename</button>
+ <button class="btn sm" onclick="dupCase('${c.id}')">Duplicate</button><button class="btn sm" onclick="exportCase('${c.id}')">Export</button><button class="btn sm danger" onclick="delCase('${c.id}')">Delete</button></div></div>`).join('')
+ :'<div class="dim">No cases yet. Run a lookup or trace, then “Save case”.</div>'}
+function toggleCases(on){const d=$('drawer');on=on===undefined?!d.classList.contains('open'):on;d.classList.toggle('open',on);if(on)listCases()}
+async function renameCase(id){const c=await Store.get(id);const n=prompt('Rename case',c.name);if(!n)return;c.name=n;c.updated=Date.now();await Store.put(c);if(curCase&&curCase.id===id){curCase.name=n;chip();caseCard()}listCases()}
+async function dupCase(id){const c=await Store.get(id);const d=JSON.parse(JSON.stringify(c));d.id=uid();d.name=c.name+' (copy)';d.created=d.updated=Date.now();await Store.put(d);listCases();toast('Duplicated')}
+async function delCase(id){const c=await Store.get(id);if(!confirm('Delete case “'+c.name+'”? This cannot be undone (export it first if unsure).'))return;await Store.del(id);if(curCase&&curCase.id===id){curCase=null;chip();caseCard()}listCases()}
+async function exportCase(id){const c=id?await Store.get(id):curCase;if(!c)return toast('No case');
+ dl('chaintrace-case-'+c.name.replace(/[^\w-]+/g,'_').slice(0,40)+'.json',new Blob([JSON.stringify({format:'chaintrace-case',version:1,exported:new Date().toISOString(),case:c},null,1)],{type:'application/json'}))}
+async function importCases(files){let n=0;for(const f of files){try{const o=JSON.parse(await f.text());const arr=o.case?[o.case]:o.cases||(o.graph?[o]:[]);
+ for(const c of arr){if(!c.graph||!c.notes)continue;if(await Store.get(c.id))c.id=uid();c.updated=Date.now();await Store.put(c);n++}}catch(e){toast('Import failed: '+f.name)}}
+ toast('Imported '+n+' case(s)');listCases()}
+// ---------- notes & custom labels ----------
+function effLabel(id){return(curCase&&curCase.labels[id])||GL()[id]||null}
+function applyCaseDecor(){const notes=curCase?curCase.notes:{nodes:{},edges:{}};
+ cy.nodes().forEach(n=>{const id=n.id();n.data('note',notes.nodes[id]?1:undefined);const L=effLabel(id);
+  if(L){if(!n.data('orig'))n.data('orig',{kind:n.data('kind')||null,lbl:n.data('lbl')});n.data('kind',L.kind||undefined);n.data('lbl','★ '+L.name);n.data('custom',1)}
+  else if(n.data('orig')){const o=n.data('orig');n.data('kind',o.kind||undefined);n.data('lbl',o.lbl);n.removeData('orig custom')}});
+ cy.edges().forEach(e=>e.data('note',notes.edges[e.id()]?1:undefined))}
+async function setNote(kind,id,txt){await ensureCase();if(txt.trim())curCase.notes[kind][id]=txt;else delete curCase.notes[kind][id];applyCaseDecor();autosave();caseCard()}
+async function saveLabel(id){const name=$('clName').value.trim();if(!name)return toast('Enter a label name');const L={name,kind:$('clKind').value||null,at:Date.now()};
+ if($('clGlobal').checked){const g=GL();g[id]=L;localStorage.ct_labels=JSON.stringify(g)}await ensureCase();curCase.labels[id]=L;applyCaseDecor();autosave();caseCard();toast('Label applied')}
+async function clearLabel(id){const g=GL();delete g[id];localStorage.ct_labels=JSON.stringify(g);if(curCase){delete curCase.labels[id];autosave()}applyCaseDecor();caseCard();toast('Label reset')}
+function noteUI(kind,id){const t=curCase?.notes[kind][id]||'';const L=effLabel(id);
+ return `<div class="card glass" id="noteCard"><h3>✎ Note${kind==='nodes'?' & custom label':''}</h3><textarea id="noteTxt" placeholder="Note for this ${kind==='nodes'?'address':'flow'} (saved in the case)…">${esc(t)}</textarea>
+ ${kind==='nodes'?`<div class="lblrow"><input type="text" id="clName" placeholder="Custom label, e.g. Suspect wallet" value="${esc(L?.name||'')}"><select id="clKind"><option value="">no category</option>${Object.keys(CAT).filter(k=>k!=='tx').map(k=>`<option value="${k}" ${L?.kind===k?'selected':''}>${CAT[k][2]}</option>`).join('')}</select>
+ <label class="dim"><input type="checkbox" id="clGlobal" ${GL()[id]?'checked':''}> all cases in this browser</label><button class="btn sm pri" onclick="saveLabel('${esc(id)}')">Apply</button><button class="btn sm" onclick="clearLabel('${esc(id)}')">Reset</button></div>`:''}</div>`}
+cy.on('tap','node',e=>{const id=e.target.id();$('det').insertAdjacentHTML('beforeend',noteUI('nodes',id));let h;$('noteTxt').oninput=ev=>{clearTimeout(h);h=setTimeout(()=>setNote('nodes',id,ev.target.value),400)}});
+cy.on('tap','edge',e=>{const id=e.target.id();$('det').insertAdjacentHTML('beforeend',noteUI('edges',id));let h;$('noteTxt').oninput=ev=>{clearTimeout(h);h=setTimeout(()=>setNote('edges',id,ev.target.value),400)}});
+cy.on('dragfree','node',()=>autosave());
+// ---------- AutoTrace ----------
+async function autoTrace(){const q=$('q').value.trim();if(!q)return;let dir=$('dir').value;if(dir==='both'){dir='forward';toast('AutoTrace follows one direction: using forward')}
+ mode='auto';share();cy.elements().remove();expanded.clear();$('det').innerHTML='';skeleton();
+ const p=`q=${encodeURIComponent(q)}&direction=${dir}&max_hops=${$('amax').value}&min_usd=${+$('amin').value||0}&topk=${$('topk').value}`;
+ const r=await fetch('/api/autotrace?'+p,{method:'POST'});const j=await r.json();if(!r.ok){busy(false,'Error: '+j.detail);toast(j.detail);$('side').innerHTML='';return}
+ job=j.job;$('tracebtn').disabled=true;$('autobtn').disabled=true;$('cancelbtn').style.display='';busy(true,'AutoTrace queued…');poll(job)}
+function renderAuto(j){const r=j.risk||{};const eps=j.endpoints||[];
+ let h=`<div class="card glass"><h3>${chainTag(j.chain)} ⚡ AutoTrace<span class="sp"></span><span class="dim" style="text-transform:none;letter-spacing:0">${j.direction} · ${j.elapsed??'–'}s</span></h3>${addrLine(j.q,j.chain,(j.root||'').startsWith('tx:'))}
+ ${j.summary&&j.summary.balance!=null?`<div class="kv"><div>Balance</div><div><span class="big">${fmt(j.summary.balance)} ${j.summary.unit}</span> <span class="usd">${usd(j.summary.balance_usd)}</span></div></div>`:''}
+ <div class="stop">⏹ ${esc(j.stop_reason||j.progress)} · ${j.nodes.length} nodes · ${j.unresolved||0} unresolved branch(es) · min $${j.params?.min_usd??''} · top-${j.params?.topk??''}</div>
+ <div class="riskrow" style="margin-top:12px">${gauge(r.score,r.level)}<div class="reasons" style="flex:1">${(r.reasons||[]).slice(0,4).map(x=>'<div>'+esc(x)+'</div>').join('')||'<div class="dim">No labelled endpoints reached.</div>'}</div></div>
+ <div class="row"><button class="btn sm pri" onclick="saveToCase()">💾 Save to case</button><button class="btn sm" onclick="exportEndpoints()">Endpoints CSV</button></div></div>
+ <div class="card glass"><h3>Endpoints · ${eps.length}</h3>${eps.length?`<table class="eptab"><tr class="dim"><td>Entity</td><td class="r">Flow in</td><td class="r">Traced ≤</td><td class="r">Hops</td></tr>`+eps.map(e=>{const i=(j.paths||[]).findIndex(p=>p.target===e.id);
+  return `<tr onclick="focusPath(${i})"><td>${tagH(e.category)}<div style="font-weight:600">${esc(e.name||short(e.id))}</div><div class="dim" style="font-size:10.5px">${e.paths} path(s) · ${esc((e.sources||[]).join(', '))}</div></td><td class="r">${usd(e.usd)}</td><td class="r">${usd(e.bottleneck_usd)}</td><td class="r">${e.hops}</td></tr>`}).join('')+'</table><div class="dim" style="font-size:11px;margin-top:6px">Flow in = value of the traced edges into the endpoint (may include unrelated funds of the sender). Traced ≤ = smallest hop on the path (upper bound for funds that could have come from the root).</div>':'<div class="dim">None reached within the caps. Try more hops or a lower min $.</div>'}</div>`;
+ $('side').innerHTML=h}
+function exportEndpoints(){const j=lastTrace;if(!j||!j.endpoints)return;const rows=[['entity','address','category','flow_in_usd','traced_upper_bound_usd','hops','paths','sources']].concat(j.endpoints.map(e=>[e.name||'',e.id,e.category,e.usd,e.bottleneck_usd,e.hops,e.paths,(e.sources||[]).join(' ')]));
+ dl(base()+'-endpoints.csv',new Blob([rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'}))}
+
 // ---------- deep links ----------
 (function(){const p=new URLSearchParams(location.search);const q=p.get('q');if(p.get('hops'))$('hops').value=p.get('hops');if(p.get('dir'))$('dir').value=p.get('dir');
  if(p.get('topk'))$('topk').value=p.get('topk');if(p.get('from'))$('df').value=p.get('from');if(p.get('to'))$('dt').value=p.get('to');
- if(q){$('q').value=q;setBadge();p.get('mode')==='trace'?traceN():go()}})();
+ if(p.get('amax'))$('amax').value=p.get('amax');if(p.get('amin'))$('amin').value=p.get('amin');
+ if(p.get('case')){openCase(p.get('case'));return}
+ if(q){$('q').value=q;setBadge();p.get('mode')==='trace'?traceN():p.get('mode')==='auto'?autoTrace():go()}})();
 </script></body></html>

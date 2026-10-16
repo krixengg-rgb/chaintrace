@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-import chains, labels, os, trace
+import chains, labels, os, trace, autotrace
 app = FastAPI(title="ChainTrace")
 # ---- auth + rate limiting (public exposure) ----
 import secrets, base64, time as _t, collections
@@ -35,7 +35,7 @@ async def guard(request: Request, call_next):
         return Response("Authentication required", 401, {"WWW-Authenticate": 'Basic realm="ChainTrace"'})
     path = request.url.path
     if path.startswith("/api/"):
-        kind = "trace" if (path == "/api/trace" and request.method == "POST") else "api"
+        kind = "trace" if (path in ("/api/trace", "/api/autotrace") and request.method == "POST") else "api"
         n, win = LIMITS[kind]; q = RL[(_ip(request), kind)]; now = _t.time()
         while q and q[0] < now - win: q.popleft()
         if len(q) >= n: return JSONResponse({"detail": f"rate limit: max {n} {kind} requests per {win}s"}, 429, {"Retry-After": str(win)})
@@ -79,6 +79,17 @@ async def trace_start(q: str, hops: int = 2, direction: str = "forward", topk: i
     if sum(1 for j in trace.JOBS.values() if j["status"] in ("queued", "running")) >= MAX_RUNNING_TRACES:
         raise HTTPException(429, "too many traces running, try again shortly")
     return {"job": trace.start(q.strip(), hops, direction, topk, max_nodes)}
+@app.post("/api/autotrace")
+async def autotrace_start(q: str, direction: str = "forward", max_hops: int = 6, max_nodes: int = 150, max_secs: int = 120,
+                          min_usd: float = 100, topk: int = 3, skip_unpriced: bool = True):
+    c, kind = chains.detect(q)
+    if not c: raise HTTPException(400, "Unrecognised address / tx hash")
+    if direction not in ("forward", "backward"): raise HTTPException(400, "direction must be forward or backward")
+    max_hops = max(1, min(8, max_hops)); max_nodes = max(10, min(250, max_nodes)); max_secs = max(15, min(240, max_secs))
+    topk = max(1, min(6, topk)); min_usd = max(0.0, min_usd)
+    if sum(1 for j in trace.JOBS.values() if j["status"] in ("queued", "running")) >= MAX_RUNNING_TRACES:
+        raise HTTPException(429, "too many traces running, try again shortly")
+    return {"job": autotrace.start(q.strip(), direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced)}
 @app.get("/api/trace/{job}")
 def trace_get(job: str):
     j = trace.JOBS.get(job)
