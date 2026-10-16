@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-import chains, labels, os, trace, autotrace
+import chains, labels, os, trace, autotrace, deposits
 app = FastAPI(title="ChainTrace")
 # ---- auth + rate limiting (public exposure) ----
 import secrets, base64, time as _t, collections
@@ -53,6 +53,14 @@ def finish(d):
         nb = [n for n in d["nodes"] if n.get("kind") != "tx"]
         worst = max(nb, key=lambda n: n["risk"], default=None)
         d["risk"] = labels.score({"risk":0,"kind":None}, nb) if worst else {"score":0,"level":"low","reasons":[]}
+    c = d.get("chain")
+    if c in deposits.NATIVE:   # suggested (inferred) exchange-deposit labels: display only, never raise risk
+        for n in d["nodes"]:
+            if not n.get("kind") and not str(n["id"]).startswith("tx:"): deposits.decorate(n, deposits.lookup_batch(c, n["id"]), endpoint_at=9)
+        if focus and focus in by and not by[focus].get("kind") and not by[focus].get("suggested") and not d.get("_paged"):
+            try: deposits.decorate(by[focus], deposits.suggest(c, focus, d), endpoint_at=9)
+            except Exception as ex: print("suggest failed", ex)
+        if focus and focus in by and by[focus].get("suggested"): d["suggestion"] = by[focus]["suggested"]
     for n in d["nodes"]: n["flag"] = n.get("kind") in labels.EXPO
     if d.get("balance") is not None: d["balance_usd"] = chains.usd_of(d["balance"], d.get("unit"))
     d["price_usd"] = chains.PRICE.get((d.get("unit") or "").upper())

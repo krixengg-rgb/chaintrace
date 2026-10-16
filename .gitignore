@@ -12,3 +12,5 @@ __pycache__/
 tunnel_url.txt
 screenshot*.png
 chains_v1.py
+data/depwork/
+/labels.sqlite

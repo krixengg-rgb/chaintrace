@@ -87,7 +87,7 @@ textarea:focus,.lblrow input:focus{border-color:rgba(124,92,255,.6)}
 .lblrow{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;font-size:12px}
 .lblrow input[type=text],.lblrow select{background:rgba(0,0,0,.25);border:1px solid var(--line);border-radius:8px;padding:5px 7px;color:var(--txt);outline:0}
 .lblrow input[type=text]{flex:1;min-width:120px}
-.eptab td{font-size:12px}.eptab tr{cursor:pointer}
+.eptab td{font-size:12px}.sbadge{display:inline-block;border:1px dashed #2ee6d6;color:#9ff3ea;border-radius:6px;padding:0 5px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}.sugg{margin-top:8px;padding:8px 10px;border:1px dashed rgba(46,230,214,.6);border-radius:10px;background:rgba(46,230,214,.06);font-size:12.5px}.sugg ul{margin:6px 0 0 16px;padding:0;font-size:11.5px;color:#b8c2da}.eptab tr{cursor:pointer}
 .stop{font-size:12px;padding:6px 9px;border-radius:9px;background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.25);margin-top:10px}
 @media (max-width:900px){#drawer{left:0;top:0;bottom:0;width:100%;border-radius:0}}
 @media (max-width:900px){
@@ -190,7 +190,8 @@ const cy=cytoscape({container:$('cy'),wheelSensitivity:.25,minZoom:.08,maxZoom:4
  {selector:'edge.hotx',style:{'line-color':'#4c8dff','target-arrow-color':'#4c8dff','z-index':8,width:e=>ew(e)+1}},
  {selector:'node.hot',style:{'border-width':4,'border-color':'#ff4d6d'}},
  {selector:'.faded',style:{opacity:.18}},
- {selector:'node[note]',style:{'border-color':'#f6c945','border-width':3,'border-style':'dashed'}},
+ {selector:'node[sugg]',style:{'border-color':'#2ee6d6','border-width':3,'border-style':'dashed','color':'#9ff3ea'}},
+ {selector:'node[note]',style:{'border-color':'#f6c945','border-width':3,'border-style':'double'}},
  {selector:'edge[note]',style:{'line-style':'dashed','line-color':'#f6c945','target-arrow-color':'#f6c945',color:'#f6dd8a'}},
  {selector:'node[custom]',style:{'text-outline-color':'#7c5cff','color':'#e3dcff'}},
  {selector:':selected',style:{'border-width':4,'border-color':'#f6c945'}}]});
@@ -201,8 +202,8 @@ function clearHl(){cy.elements().removeClass('faded hot hotx');cy.elements().uns
 let chainOf={},expanded=new Set(),cur=null,job=null,lastTrace=null,mode='lookup';
 function add(d,focus){const els=[],ids=new Set();$('empty').style.display='none';
  for(const n of d.nodes){chainOf[n.id]=n.chain;const ex=cy.getElementById(n.id);
-  if(ex.length){if(n.kind&&!ex.data('kind')){ex.data('kind',n.kind);ex.data('info',n);ex.data('lbl',n.name||short(n.id))}continue}
-  ids.add(n.id);els.push({group:'nodes',data:{id:n.id,lbl:n.name?(n.name.length>26?n.name.slice(0,25)+'…':n.name):short(n.id),kind:n.kind||undefined,info:n,focus:n.id===focus}})}
+  if(ex.length){if((n.kind&&!ex.data('kind'))||(n.suggested&&!ex.data('sugg'))){if(n.kind)ex.data('kind',n.kind);if(n.suggested)ex.data('sugg',1);ex.data('info',n);ex.data('lbl',n.name||short(n.id))}continue}
+  ids.add(n.id);els.push({group:'nodes',data:{id:n.id,lbl:n.name?(n.name.length>26?n.name.slice(0,25)+'…':n.name):short(n.id),kind:n.kind||undefined,sugg:n.suggested?1:undefined,info:n,focus:n.id===focus}})}
  for(const e of d.edges){const id=e.source+'>'+e.target+(e.unit||'');if(cy.getElementById(id).length)continue;
   const has=x=>ids.has(x)||cy.getElementById(x).length;if(!has(e.source)||!has(e.target))continue;
   els.push({group:'edges',data:{id,source:e.source,target:e.target,usd:e.usd||0,lbl:fmt(e.amount,4)+' '+(e.unit||d.unit||'')+(e.usd?' · '+usd(e.usd):'')+(e.count>1?' ×'+e.count:''),info:e}})}
@@ -251,8 +252,11 @@ const tagH=k=>k&&CAT[k]?`<span class="tag" style="color:${CAT[k][0]};border-colo
 const chainTag=c=>c&&CH[c]?`<span class="badge ${c}">${CH[c].sym} ${CH[c].n}</span>`:'';
 const addrLine=(a,c,tx)=>`<div class="addr"><span class="mono">${esc(a)}</span><button class="copy" title="Copy" onclick="copy('${esc(a)}')">⧉</button>${c&&CH[c]?`<a class="copy" title="Open in explorer" target="_blank" rel="noopener" href="${(tx?CH[c].tx:CH[c].ad)+esc(a)}">↗</a>`:''}</div>`;
 function srcList(sources){if(!sources||!sources.length)return'';return '<div class="dim" style="font-size:11.5px;margin-top:8px">'+[...new Set(sources.map(s=>s.source+' · '+s.licence))].map(esc).join('<br>')+'</div>'}
+function suggH(sg,compact){if(!sg)return'';const ev=sg.evidence||{};const pct=Math.floor((sg.confidence||0)*100);
+ const li=[ev.sweeps!=null&&`${ev.sweeps} of ${ev.outflows??'?'} outflow(s) went to ${esc(sg.entity)} wallet <span class="mono">${short(ev.hub||'')}</span>`,ev.in_senders!=null&&`${ev.in_senders} distinct sender(s) in`,ev.out_counterparties!=null&&`${ev.out_counterparties} outgoing counterparty(ies)`,ev.gas_topup_from_exchange&&'gas top-up received from an exchange wallet',ev.usd_swept!=null&&`${usd(ev.usd_swept)} swept${ev.usd_in?' of '+usd(ev.usd_in)+' received':''}`].filter(Boolean);
+ return `<div class="sugg"><span class="sbadge">suggested</span> <b>${esc(sg.label||sg.entity+' deposit')}</b> <span class="dim">${pct}% · ${esc(sg.method||'')}</span>${compact?'':`<div class="dim" style="font-size:11px;margin-top:4px">Not a verified label: inferred from sweep behaviour in recent activity. Does not add risk beyond exchange level.</div><ul>${li.map(x=>'<li>'+x+'</li>').join('')}</ul>`}</div>`}
 function render(d){const r=d.risk||{};const id=d.address||d.tx;let h=`<div class="card glass"><h3>${chainTag(d.chain)} ${d.kind==='tx'?'Transaction':'Address'}<span class="sp"></span></h3>${addrLine(id,d.chain,d.kind==='tx')}
- ${d.label&&(d.label.name||d.label.kind)?`<div style="margin-top:8px;font-weight:600">${esc(d.label.name||'')} ${tagH(d.label.kind)}</div>`+srcList(d.label.sources):''}
+ ${d.label&&(d.label.name||d.label.kind)?`<div style="margin-top:8px;font-weight:600">${esc(d.label.name||'')} ${tagH(d.label.kind)}</div>`+srcList(d.label.sources):''}${suggH(d.suggestion)}
  <div class="riskrow" style="margin-top:12px">${gauge(r.score,r.level)}<div class="reasons" style="flex:1">${(r.reasons||[]).length?(r.reasons||[]).slice(0,5).map(x=>'<div>'+esc(x)+'</div>').join(''):'<div class="dim">No risk indicators found in the fetched activity.</div>'}</div></div>`;
  if(d.kind==='address'){h+=`<div class="kv"><div>Balance</div><div><span class="big">${fmt(d.balance)} ${d.unit}</span> <span class="usd">${usd(d.balance_usd)}</span></div><div>Transactions</div><div>${d.tx_count??'?'}</div>
   ${d.tokens&&d.tokens.length?'<div>Tokens</div><div>'+d.tokens.slice(0,8).map(t=>fmt(t.amount,2)+' '+esc(t.symbol||short(t.mint))).join(' · ')+'</div>':''}</div>`}
@@ -269,7 +273,7 @@ function renderTrace(j){const r=j.risk||{};let h=`<div class="card glass"><h3>${
  <div class="card glass"><h3>Paths to labelled entities · ${(j.paths||[]).length}</h3>`+((j.paths||[]).map((p,i)=>`<div class="path" onclick="focusPath(${i})">${tagH(p.kind)}<div style="flex:1;min-width:0"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name||short(p.target))}</div><div class="dim" style="font-size:11px">${p.dir} · ${p.hops} hop(s) · src: ${esc(p.sources||'?')}</div></div></div>`).join('')||'<div class="dim">None within the explored hops.</div>')+'</div>';
  $('side').innerHTML=h}
 cy.on('tap','node',e=>{const n=e.target.data('info')||{};const isTx=n.id&&n.id.startsWith('tx:');
- $('det').innerHTML=`<div class="card glass"><h3>${chainTag(n.chain)} ${esc(n.name||(isTx?'Transaction':'Address'))} ${tagH(n.kind)}</h3>${addrLine(isTx?n.id.slice(3):n.id,n.chain,isTx)}
+ $('det').innerHTML=`<div class="card glass"><h3>${chainTag(n.chain)} ${esc(n.name||(isTx?'Transaction':'Address'))} ${tagH(n.kind)}</h3>${addrLine(isTx?n.id.slice(3):n.id,n.chain,isTx)}${suggH(n.suggested)}
  ${(n.sources||[]).length?'<div style="font-size:12px;margin-top:8px">'+n.sources.map(s=>`<div style="margin:3px 0">${tagH(s.category)} “${esc(s.name||'')}”<div class="dim" style="font-size:11px">${esc(s.source)} · ${esc(s.licence)} · conf ${s.confidence}</div></div>`).join('')+'</div>':''}
  ${isTx?'':`<div class="row"><button class="btn sm pri" onclick="expand('${esc(n.id)}')">Expand hops</button><button class="btn sm" onclick="$('q').value='${esc(n.id)}';setBadge();go()">Trace as root</button></div>`}</div>`;
  if(innerWidth<900)$('det').scrollIntoView({behavior:'smooth'})});
@@ -371,7 +375,7 @@ function renderAuto(j){const r=j.risk||{};const eps=j.endpoints||[];
  <div class="riskrow" style="margin-top:12px">${gauge(r.score,r.level)}<div class="reasons" style="flex:1">${(r.reasons||[]).slice(0,4).map(x=>'<div>'+esc(x)+'</div>').join('')||'<div class="dim">No labelled endpoints reached.</div>'}</div></div>
  <div class="row"><button class="btn sm pri" onclick="saveToCase()">💾 Save to case</button><button class="btn sm" onclick="exportEndpoints()">Endpoints CSV</button></div></div>
  <div class="card glass"><h3>Endpoints · ${eps.length}</h3>${eps.length?`<table class="eptab"><tr class="dim"><td>Entity</td><td class="r">Flow in</td><td class="r">Traced ≤</td><td class="r">Hops</td></tr>`+eps.map(e=>{const i=(j.paths||[]).findIndex(p=>p.target===e.id);
-  return `<tr onclick="focusPath(${i})"><td>${tagH(e.category)}<div style="font-weight:600">${esc(e.name||short(e.id))}</div><div class="dim" style="font-size:10.5px">${e.paths} path(s) · ${esc((e.sources||[]).join(', '))}</div></td><td class="r">${usd(e.usd)}</td><td class="r">${usd(e.bottleneck_usd)}</td><td class="r">${e.hops}</td></tr>`}).join('')+'</table><div class="dim" style="font-size:11px;margin-top:6px">Flow in = value of the traced edges into the endpoint (may include unrelated funds of the sender). Traced ≤ = smallest hop on the path (upper bound for funds that could have come from the root).</div>':'<div class="dim">None reached within the caps. Try more hops or a lower min $.</div>'}</div>`;
+  return `<tr onclick="focusPath(${i})"><td>${tagH(e.category)}<div style="font-weight:600">${esc(e.name||short(e.id))}${e.suggested?` <span class="sbadge">suggested ${Math.floor(e.suggested.confidence*100)}%</span>`:''}</div><div class="dim" style="font-size:10.5px">${e.paths} path(s) · ${esc((e.sources||[]).join(', '))}</div></td><td class="r">${usd(e.usd)}</td><td class="r">${usd(e.bottleneck_usd)}</td><td class="r">${e.hops}</td></tr>`}).join('')+'</table><div class="dim" style="font-size:11px;margin-top:6px">Flow in = value of the traced edges into the endpoint (may include unrelated funds of the sender). Traced ≤ = smallest hop on the path (upper bound for funds that could have come from the root).</div>':'<div class="dim">None reached within the caps. Try more hops or a lower min $.</div>'}</div>`;
  $('side').innerHTML=h}
 function exportEndpoints(){const j=lastTrace;if(!j||!j.endpoints)return;const rows=[['entity','address','category','flow_in_usd','traced_upper_bound_usd','hops','paths','sources']].concat(j.endpoints.map(e=>[e.name||'',e.id,e.category,e.usd,e.bottleneck_usd,e.hops,e.paths,(e.sources||[]).join(' ')]));
  dl(base()+'-endpoints.csv',new Blob([rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'}))}
