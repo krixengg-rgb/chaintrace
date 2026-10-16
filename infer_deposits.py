@@ -289,7 +289,10 @@ async def scan_chain(c, deadline, model):
                     if labels.norm(c, e["target"]) != a or s in hm or labels.db_labels(c, s) or labels.EXCH.get(c, {}).get(s): continue
                     new += db.execute("INSERT OR IGNORE INTO cands(chain,addr,hub,seen) VALUES(?,?,?,?)", (c, s, a, time.time())).rowcount
                 pg += 1; done = (not nxt) or pg >= PAGES[c]
-                db.execute("UPDATE hubs SET cursor=?,pages=?,status=?,prio=prio*0.97 WHERE chain=? AND addr=?", (nxt, pg, "done" if done else "pending", c, a))
+                # activity-based priority: busier wallets (tx_count, new candidates per page) stay ahead; halve per page for rotation
+                act = d.get("tx_count") if isinstance(d.get("tx_count"), int) else 0
+                pr = (10 + 5 * math.log10(act + 1) + 2 * new) if pg == 1 else None
+                db.execute("UPDATE hubs SET cursor=?,pages=?,status=?,prio=coalesce(max(?,prio*0.5),prio*0.5) WHERE chain=? AND addr=?", (nxt, pg, "done" if done else "pending", pr, c, a))
             except Exception as ex:
                 db.execute("UPDATE hubs SET tries=tries+1 WHERE chain=? AND addr=?", (c, a)); slog(c, "hub error", a[:12], str(ex)[:80])
             db.commit(); continue
