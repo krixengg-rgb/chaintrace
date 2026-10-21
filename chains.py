@@ -51,7 +51,7 @@ async def ensure_prices():
     if time.time() - _price_ts[0] < 600: return PRICE
     _price_ts[0] = time.time()
     try:
-        d = await asyncio.wait_for(get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd", ttl=600), 8)
+        d = await asyncio.wait_for(get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd", ttl=600), 4)
         b, e, s = d["bitcoin"]["usd"], d["ethereum"]["usd"], d["solana"]["usd"]
         PRICE.update({"BTC": b, "WBTC": b, "ETH": e, "WETH": e, "STETH": e, "SOL": s, "WSOL": s})
     except Exception as ex:
@@ -255,6 +255,7 @@ def sol_transfers(tx):
             unit = SOL_TOKENS.get(mt, (mt or "SPL")[:6] + "…")
             out.append((owner.get(s) or info.get("authority") or s, owner.get(d) or d, amt, unit))
     return [o for o in out if o[0] and o[1]]
+SOL_DEADLINE = float(os.environ.get("CHAINTRACE_SOL_DEADLINE", "17"))
 SOL_TOKENS = {"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v":"USDC","Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB":"USDT",
               "So11111111111111111111111111111111111111112":"wSOL"}
 async def sol_address(a, limit=15):
@@ -345,7 +346,7 @@ async def btc_address(a, cursor=None, f=None, to=None, pages=1):
     return out
 
 BS_TIMEOUT = float(os.environ.get("CHAINTRACE_BS_TIMEOUT", "9"))      # hard per-call cap for Blockscout info/counters/tx
-BS_STREAM_TIMEOUT = float(os.environ.get("CHAINTRACE_BS_STREAM_TIMEOUT", "12"))   # history streams (token-transfers is often ~9s)
+BS_STREAM_TIMEOUT = float(os.environ.get("CHAINTRACE_BS_STREAM_TIMEOUT", "11"))   # history streams (token-transfers is often ~9s)
 ETH_RPCS = [ETH_RPC, "https://eth.drpc.org", "https://cloudflare-eth.com"]   # free, keyless public RPCs (raced)
 ETHPLORER = "https://api.ethplorer.io"                                 # documented public 'freekey' (no signup), fallback only
 async def _cap(coro, t):
@@ -420,7 +421,11 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
     al = a.lower(); ntags = {}; edges = []; hist = []
     def reg(x):
         if x and x.get("hash"): ntags.setdefault(x["hash"], _tags(x))
-    failed = set()
+    failed = set(); spec = None
+    if not cursor and not (f or to):
+        async def _spec():   # hedge: if Blockscout hasn't answered within 5s, fetch the fallback in parallel
+            await asyncio.sleep(5); return await _ethplorer_history(a, True, True)
+        spec = asyncio.create_task(_spec())
     for _ in range(max(1, pages)):
         (tx, ct, f1), (tt, ck, f2), (it, ci, f3) = await asyncio.gather(_bs_stream(a, "transactions", cur["t"]),
             _bs_stream(a, "token-transfers", cur["k"]), _bs_stream(a, "internal-transactions", cur["i"]))
@@ -456,14 +461,21 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
         if done or hist or failed or time.time() - t0 > DEADLINE: break
     if ({"transactions", "token transfers"} & failed) and not cursor and not (f or to):
         we, wt = "transactions" in failed, "token transfers" in failed
-        e2_, h2_, ok = await _ethplorer_history(a, we, wt)
+        if spec:
+            try: e2_, h2_, ok = await asyncio.wait_for(spec, 9)
+            except Exception: e2_, h2_, ok = [], [], False
+            keep = lambda h_: (we and "token" not in (h_.get("method") or "")) or (wt and "token" in (h_.get("method") or ""))
+            e2_ = [e for e in e2_ if (we and e["unit"] == "ETH") or (wt and e["unit"] != "ETH")]; h2_ = [h_ for h_ in h2_ if keep(h_)]
+            spec = None
+        else: e2_, h2_, ok = await _ethplorer_history(a, we, wt)
         what = " + ".join(x for x, w in (("ETH transfers", we), ("token transfers", wt)) if w)
         cs = {x.lower(): x for e in edges for x in (e["source"], e["target"])}   # reuse checksum forms seen from Blockscout
         for e in e2_: e["source"] = cs.get(e["source"].lower(), e["source"]); e["target"] = cs.get(e["target"].lower(), e["target"])
         if ok: edges += e2_; hist += h2_; out["history_source"] = f"{what} from Ethplorer (fallback, last ~50)"
         else: out["history_source"] = f"{what} unavailable"
+    if spec: spec.cancel()
     if hdr:
-        try: await asyncio.wait_for(hdr, max(1, 23 - (time.time() - t0)))
+        try: await asyncio.wait_for(hdr, max(1, 20 - (time.time() - t0)))
         except Exception: miss.append("header")
         out.setdefault("balance", None)
     # canonical address: from Blockscout info, else the checksummed form seen in edges, else as typed
@@ -483,10 +495,10 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
     return out
 
 async def sol_address(a, cursor=None, f=None, to=None, pages=1, limit=15):
-    out = {"chain": "sol", "address": a, "unit": "SOL"}; await ensure_prices()
+    out = {"chain": "sol", "address": a, "unit": "SOL"}; t0 = time.time(); await ensure_prices()
     if not cursor:
         out["balance"] = (await rpc(SOL, "getBalance", [a]))["value"] / 1e9
-        try: tokens = await rpc(SOL, "getTokenAccountsByOwner", [a, {"programId":"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"}, {"encoding":"jsonParsed"}])
+        try: tokens = await asyncio.wait_for(rpc(SOL, "getTokenAccountsByOwner", [a, {"programId":"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"}, {"encoding":"jsonParsed"}]), 6)
         except Exception: tokens = {"value": []}
         tb = []
         for t in tokens.get("value", [])[:50]:
@@ -501,6 +513,10 @@ async def sol_address(a, cursor=None, f=None, to=None, pages=1, limit=15):
         nxt = sigs[-1]["signature"] if len(sigs) >= limit else None
         stop = False
         for s in sigs:
+            if time.time() - t0 > SOL_DEADLINE:   # partial page instead of a proxy timeout; Load more continues from here
+                out["partial"] = True; nxt = hist[-1]["tx"] if hist else nxt
+                out["warnings"] = [f"Solana RPC is slow right now: showing the {len(hist)} most recent transaction(s) fetched in time; use Load more for the rest"]
+                break
             t = s.get("blockTime")
             if to and t and t > to: continue
             if f and t and t < f: stop = True; continue
