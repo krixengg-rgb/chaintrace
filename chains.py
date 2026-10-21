@@ -344,7 +344,8 @@ async def btc_address(a, cursor=None, f=None, to=None, pages=1):
     out["cluster"] = sorted(cluster); out["next"] = cursor
     return out
 
-BS_TIMEOUT = float(os.environ.get("CHAINTRACE_BS_TIMEOUT", "9"))      # hard per-call cap for every Blockscout endpoint
+BS_TIMEOUT = float(os.environ.get("CHAINTRACE_BS_TIMEOUT", "9"))      # hard per-call cap for Blockscout info/counters/tx
+BS_STREAM_TIMEOUT = float(os.environ.get("CHAINTRACE_BS_STREAM_TIMEOUT", "12"))   # history streams (token-transfers is often ~9s)
 ETH_RPCS = [ETH_RPC, "https://eth.drpc.org", "https://cloudflare-eth.com"]   # free, keyless public RPCs (raced)
 ETHPLORER = "https://api.ethplorer.io"                                 # documented public 'freekey' (no signup), fallback only
 async def _cap(coro, t):
@@ -355,7 +356,7 @@ async def _bs_stream(a, path, params):
     if params == "done": return [], "done", False
     nk = f"{a}/{path}/{params}"
     if time.time() - NEG.get(nk, 0) < 600: return [], params, True
-    d, err = await _cap(get(f"{BS}/addresses/{a}/{path}", ttl=LONG if params else 900, params=params or {}), min(BS_TIMEOUT, 8 if "internal" in path else BS_TIMEOUT))
+    d, err = await _cap(get(f"{BS}/addresses/{a}/{path}", ttl=LONG if params else 900, params=params or {}), 8 if "internal" in path else BS_STREAM_TIMEOUT)
     if d is None:
         NEG[nk] = time.time(); WARN.append(f"blockscout {path} unavailable for {a[:10]}: {err}"); return [], params, True
     return d.get("items", []), (d.get("next_page_params") or "done"), False
@@ -374,12 +375,13 @@ async def eth_rpc_any(method, params, t=7):
     finally:
         for x in tasks: x.cancel()
     return None
-async def _ethplorer_history(a):
+async def _ethplorer_history(a, want_eth=True, want_tok=True):
     """fallback history when Blockscout streams fail (ETH transfers + token transfers, last ~50 each)"""
     al = a.lower(); edges = []; hist = []
+    async def none(): return None
     (txs, _), (th, _) = await asyncio.gather(
-        _cap(get(f"{ETHPLORER}/getAddressTransactions/{al}", ttl=600, params={"apiKey": "freekey", "limit": 50}), 8),
-        _cap(get(f"{ETHPLORER}/getAddressHistory/{al}", ttl=600, params={"apiKey": "freekey", "limit": 50, "type": "transfer"}), 8))
+        _cap(get(f"{ETHPLORER}/getAddressTransactions/{al}", ttl=600, params={"apiKey": "freekey", "limit": 50}) if want_eth else none(), 8),
+        _cap(get(f"{ETHPLORER}/getAddressHistory/{al}", ttl=600, params={"apiKey": "freekey", "limit": 50, "type": "transfer"}) if want_tok else none(), 8))
     for t in (txs if isinstance(txs, list) else []):
         fr, too, v = t.get("from"), t.get("to"), float(t.get("value") or 0)
         if fr and too: edges.append({"source": fr, "target": too, "amount": v, "tx": t.get("hash"), "unit": "ETH", "time": t.get("timestamp")})
@@ -452,12 +454,16 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
         done = all(v == "done" for v in cur.values())
         if f and times and max(times) < f: done = True
         if done or hist or failed or time.time() - t0 > DEADLINE: break
-    if "transactions" in failed and "token transfers" in failed and not cursor:
-        e2_, h2_, ok = await _ethplorer_history(a)
-        if ok: edges += e2_; hist += h2_; out["history_source"] = "ethplorer (fallback, last ~50 transfers)"
-        else: out["history_source"] = "unavailable"
+    if ({"transactions", "token transfers"} & failed) and not cursor and not (f or to):
+        we, wt = "transactions" in failed, "token transfers" in failed
+        e2_, h2_, ok = await _ethplorer_history(a, we, wt)
+        what = " + ".join(x for x, w in (("ETH transfers", we), ("token transfers", wt)) if w)
+        cs = {x.lower(): x for e in edges for x in (e["source"], e["target"])}   # reuse checksum forms seen from Blockscout
+        for e in e2_: e["source"] = cs.get(e["source"].lower(), e["source"]); e["target"] = cs.get(e["target"].lower(), e["target"])
+        if ok: edges += e2_; hist += h2_; out["history_source"] = f"{what} from Ethplorer (fallback, last ~50)"
+        else: out["history_source"] = f"{what} unavailable"
     if hdr:
-        try: await asyncio.wait_for(hdr, max(1, 22 - (time.time() - t0)))
+        try: await asyncio.wait_for(hdr, max(1, 23 - (time.time() - t0)))
         except Exception: miss.append("header")
         out.setdefault("balance", None)
     # canonical address: from Blockscout info, else the checksummed form seen in edges, else as typed
