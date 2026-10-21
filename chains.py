@@ -412,9 +412,9 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
         else: out["balance"] = None; out["balance_source"] = "unavailable"
         out["is_contract"] = info.get("is_contract") if info else (None if code is None else code not in ("0x", "0x0", ""))
         if cnt: out["tx_count"] = cnt.get("transactions_count"); out["token_transfers_count"] = cnt.get("token_transfers_count")
-        else:
-            miss.append("counters")
-            if nonce: out["tx_count"] = int(nonce, 16); out["tx_count_note"] = "outgoing txs (nonce) from RPC"
+        else: miss.append("counters")
+        if str(out.get("tx_count") or "0") == "0" and nonce and int(nonce, 16) > 0:   # missing or bogus 0 counter -> RPC nonce
+            out["tx_count"] = int(nonce, 16); out["tx_count_note"] = "outgoing txs (nonce) from RPC"
     hdr = asyncio.create_task(_hdr()) if not cursor else None   # runs concurrently with the history streams
     cur = dec(cursor) or {"t": None, "k": None, "i": None}
     al = a.lower(); ntags = {}; edges = []; hist = []
