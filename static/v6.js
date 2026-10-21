@@ -21,10 +21,10 @@ function applyDir(){cy.batch(()=>{cy.edges().removeClass('din dout');if(!V.dir)r
  const ids=new Set([f.id()]);if(f.data('grp'))f.children().forEach(c=>ids.add(c.id()));
  cy.edges().forEach(e=>{if(e.hasClass('hot')||e.hasClass('hotx'))return;const s=ids.has(e.data('source')),t=ids.has(e.data('target'));if(t&&!s)e.addClass('din');else if(s&&!t)e.addClass('dout')})})}
 // ---------- entity grouping ----------
-function entName(s){s=String(s||'').split(/[:|(]/)[0].replace(/\b(hot|cold|deposit)\s*wallet\b/ig,'').replace(/[\s_#-]*\d+\s*$/,'').trim();return s.length>=2?s:null}
-function gkey(n){const i=n.data('info')||{};if(!i.id||String(i.id).startsWith('tx:'))return null;
+function entName(s){s=String(s||'').split(/[:|(]/)[0].replace(/\b(hot|cold|deposit)\s*wallet\b/ig,'').replace(/\s+[\d.,]+\s*[kKmM]?\s*[A-Za-z]{2,6}\s*$/,'').replace(/[\s_#-]+\d+\s*$/,'').trim();return s.length>=2?s:null}
+function gkey(n){const i=n.data('info')||{};if(!i.id||String(i.id).startsWith('tx:')||n.data('focus'))return null;   // the focus/root stays outside groups
  const sg=i.suggested;if(sg){const ent=sg.entity||(sg.label||'').replace(/ deposit$/,'');if(ent)return['dep:'+ent.toLowerCase(),ent+' deposits (suggested)','exchange']}
- if(i.kind&&i.name){const ent=entName(i.name);if(ent)return['ent:'+ent.toLowerCase(),ent,i.kind]}
+ if(i.kind&&i.name){const ent=entName(i.name);if(ent)return['ent:'+ent.toLowerCase().replace(/[^a-z0-9]/g,''),ent,i.kind]}
  if(cur&&cur.chain==='btc'&&(cur.cluster||[]).length>1&&cur.cluster.includes(i.id))return['clu:'+cur.address,'Cluster of '+short(cur.address),null];
  return null}
 const kids=g=>cy.nodes().filter(n=>n.data('gof')===g.id()||n.data('parent')===g.id());
@@ -88,8 +88,8 @@ tools();
 const _relayout=relayout;window.relayout=function(){if(window._noLay)return;const gs=cy.nodes('[?grp]').filter(g=>!g.data('collapsed'));if(!gs.length)return _relayout();
  // cose handles compound nodes badly (groups drift far away): lay out flat with short invisible spring edges between members, then re-parent
  const mem=[];cy.batch(()=>{gs.forEach(g=>{const k=g.children();mem.push([g.id(),k]);k.move({parent:null})});gs.addClass('glay')});const tmp=[];
- for(const[,k]of mem)k.slice(1).forEach(b=>tmp.push({group:'edges',data:{id:'tmp:'+k[0].id()+'~'+b.id(),source:k[0].id(),target:b.id(),tmp:1}}));
- const T=cy.add(tmp);const L=cy.elements().not('[?grp]').not('.gmem').not('.noise').layout({...lay(),idealEdgeLength:e=>e.data('tmp')?30:120,edgeElasticity:e=>e.data('tmp')?400:80});
+ for(const[,k]of mem){const a=k.map(x=>x.id());for(let i=0;i<a.length;i++)for(let j=i+1;j<a.length&&(a.length<=8||j===i+1);j++)tmp.push({group:'edges',data:{id:'tmp:'+a[i]+'~'+a[j],source:a[i],target:a[j],tmp:1}})}
+ const T=cy.add(tmp);const L=cy.elements().not('[?grp]').not('.gmem').not('.noise').layout({...lay(),idealEdgeLength:e=>e.data('tmp')?25:120,edgeElasticity:e=>e.data('tmp')?4:80});
  L.one('layoutstop',()=>{cy.batch(()=>{cy.remove(T);mem.forEach(([g,k])=>k.move({parent:g}));cy.nodes('[?grp]').removeClass('glay')})});L.run()};
 const _add=add;window.add=function(d,focus){const n0=cy.nodes().length;window._noLay=1;try{_add(d,focus)}finally{window._noLay=0}
  const grew=cy.nodes().length!==n0;refresh(false);if(grew)relayout()};
