@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-import chains, labels, os, trace, autotrace, deposits
+import asyncio, chains, labels, os, trace, autotrace, deposits
 app = FastAPI(title="ChainTrace")
 # ---- auth + rate limiting (public exposure) ----
 import secrets, base64, time as _t, collections
@@ -42,6 +42,7 @@ async def guard(request: Request, call_next):
         q.append(now)
     return await call_next(request)
 MAX_RUNNING_TRACES = 2
+LOOKUP_TIMEOUT = float(os.environ.get("CHAINTRACE_LOOKUP_TIMEOUT", "25"))   # stay under proxy timeouts
 H = os.path.dirname(__file__)
 def finish(d):
     by = {n["id"]: n for n in d["nodes"]}
@@ -72,10 +73,11 @@ async def lookup(q: str, chain: str | None = None, cursor: str | None = None, da
     if not c: raise HTTPException(400, "Unrecognised address / tx hash")
     try:
         if kind == "address":
-            d = await chains.ADDR[c](q.strip(), cursor=cursor, f=date_from, to=date_to, pages=6 if (date_from or date_to) else 1)
+            d = await asyncio.wait_for(chains.ADDR[c](q.strip(), cursor=cursor, f=date_from, to=date_to, pages=6 if (date_from or date_to) else 1), LOOKUP_TIMEOUT)
         else:
-            await chains.ensure_prices(); d = await chains.TX[c](q.strip())
+            await chains.ensure_prices(); d = await asyncio.wait_for(chains.TX[c](q.strip()), LOOKUP_TIMEOUT)
             for e in d["edges"]: e.setdefault("usd", chains.usd_of(e.get("amount"), e.get("unit") or d.get("unit")))
+    except asyncio.TimeoutError: raise HTTPException(504, f"{c} data sources too slow right now (>{LOOKUP_TIMEOUT:.0f}s); please retry")
     except Exception as e: raise HTTPException(502, f"{c} upstream error: {e}")
     d["kind"] = kind; return finish(d)
 @app.post("/api/trace")

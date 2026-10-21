@@ -32,7 +32,9 @@ _cache = _C()
 TTL = 300
 LONG = 30 * 86400   # immutable data (old pages, confirmed txs)
 SEM = {"mempool.space": asyncio.Semaphore(3), "blockscout": asyncio.Semaphore(4), "solana": asyncio.Semaphore(1), "other": asyncio.Semaphore(4)}
-def _sem(u): return next((v for k, v in SEM.items() if k in u), SEM["other"])
+def _sem(u):
+    if u.startswith(os.environ.get("CHAINTRACE_BS", "https://eth.blockscout.com")): return SEM["blockscout"]   # stalled Blockscout never starves RPC
+    return next((v for k, v in SEM.items() if k in u), SEM["other"])
 def ts_of(t):
     if t is None: return None
     if isinstance(t, (int, float)): return int(t)
@@ -154,7 +156,7 @@ def _agg(edges, cap):
     return sorted(m.values(), key=lambda e: -e["amount"])[:cap]
 
 # ---------------- ETH (Blockscout + public RPC) ----------------
-BS = "https://eth.blockscout.com/api/v2"; ETH_RPC = "https://ethereum-rpc.publicnode.com"
+BS = os.environ.get("CHAINTRACE_BS", "https://eth.blockscout.com/api/v2"); ETH_RPC = "https://ethereum-rpc.publicnode.com"
 def _tags(x):
     if not x: return []
     t = [g["name"] for g in ((x.get("metadata") or {}).get("tags") or [])]
@@ -203,9 +205,9 @@ def _agg_unit(edges, cap):
     # keep the biggest flows by USD where known, then by frequency
     return sorted(m.values(), key=lambda e: (-(e["usd"] or 0), -e["count"]))[:cap]
 async def eth_tx(h):
-    t = await get(f"{BS}/transactions/{h}")
-    try: tts = (await get(f"{BS}/transactions/{h}/token-transfers")).get("items", [])
-    except Exception: tts = []
+    (t, err), (tt_, _) = await asyncio.gather(_cap(get(f"{BS}/transactions/{h}"), BS_TIMEOUT + 3), _cap(get(f"{BS}/transactions/{h}/token-transfers"), BS_TIMEOUT))
+    if t is None: raise Exception(f"Blockscout transaction endpoint unavailable ({err}); try again shortly")
+    tts = (tt_ or {}).get("items", [])
     tid = "tx:" + h; nodes = {tid: {"id": tid,"chain":"eth","kind":"tx","name":"tx "+h[:10],"tags":[],"risk":0}}; edges = []
     f, to = t.get("from"), t.get("to")
     for x in (f, to):
@@ -342,37 +344,86 @@ async def btc_address(a, cursor=None, f=None, to=None, pages=1):
     out["cluster"] = sorted(cluster); out["next"] = cursor
     return out
 
+BS_TIMEOUT = float(os.environ.get("CHAINTRACE_BS_TIMEOUT", "9"))      # hard per-call cap for every Blockscout endpoint
+ETH_RPCS = [ETH_RPC, "https://eth.drpc.org", "https://cloudflare-eth.com"]   # free, keyless public RPCs (raced)
+ETHPLORER = "https://api.ethplorer.io"                                 # documented public 'freekey' (no signup), fallback only
+async def _cap(coro, t):
+    try: return await asyncio.wait_for(coro, t), None
+    except Exception as ex: return None, type(ex).__name__ or "error"
 async def _bs_stream(a, path, params):
-    if params == "done": return [], "done"
+    """one Blockscout history stream; never raises. returns (items, next, failed)"""
+    if params == "done": return [], "done", False
     nk = f"{a}/{path}/{params}"
-    if time.time() - NEG.get(nk, 0) < 3600: return [], "done"
-    try: d = await asyncio.wait_for(get(f"{BS}/addresses/{a}/{path}", ttl=LONG if params else 900, params=params or {}), 8 if "internal" in path else 20)
-    except Exception as ex:
-        if path == "transactions": raise
-        NEG[nk] = time.time(); WARN.append(f"blockscout {path} unavailable for {a[:10]}: {type(ex).__name__}"); return [], "done"
-    return d.get("items", []), (d.get("next_page_params") or "done")
+    if time.time() - NEG.get(nk, 0) < 600: return [], params, True
+    d, err = await _cap(get(f"{BS}/addresses/{a}/{path}", ttl=LONG if params else 900, params=params or {}), min(BS_TIMEOUT, 8 if "internal" in path else BS_TIMEOUT))
+    if d is None:
+        NEG[nk] = time.time(); WARN.append(f"blockscout {path} unavailable for {a[:10]}: {err}"); return [], params, True
+    return d.get("items", []), (d.get("next_page_params") or "done"), False
+async def eth_rpc_any(method, params, t=7):
+    """race the free RPCs; first good answer wins"""
+    async def one(u):
+        r = await rpc(u, method, params)
+        if r is None: raise Exception("empty")
+        return r
+    tasks = [asyncio.create_task(one(u)) for u in ETH_RPCS]
+    try:
+        for fut in asyncio.as_completed(tasks, timeout=t):
+            try: return await fut
+            except Exception: continue
+    except Exception: pass
+    finally:
+        for x in tasks: x.cancel()
+    return None
+async def _ethplorer_history(a):
+    """fallback history when Blockscout streams fail (ETH transfers + token transfers, last ~50 each)"""
+    al = a.lower(); edges = []; hist = []
+    (txs, _), (th, _) = await asyncio.gather(
+        _cap(get(f"{ETHPLORER}/getAddressTransactions/{al}", ttl=600, params={"apiKey": "freekey", "limit": 50}), 8),
+        _cap(get(f"{ETHPLORER}/getAddressHistory/{al}", ttl=600, params={"apiKey": "freekey", "limit": 50, "type": "transfer"}), 8))
+    for t in (txs if isinstance(txs, list) else []):
+        fr, too, v = t.get("from"), t.get("to"), float(t.get("value") or 0)
+        if fr and too: edges.append({"source": fr, "target": too, "amount": v, "tx": t.get("hash"), "unit": "ETH", "time": t.get("timestamp")})
+        hist.append({"tx": t.get("hash"), "time": t.get("timestamp"), "delta": v if (too or "").lower() == al else -v, "unit": "ETH", "status": "ok" if t.get("success", True) else "error", "method": "transfer (ethplorer)"})
+    for t in ((th or {}).get("operations") or []):
+        ti = t.get("tokenInfo") or {}; sym = ti.get("symbol") or "TOKEN"
+        try: v = int(t.get("value") or 0) / 10 ** int(ti.get("decimals") or 0)
+        except Exception: v = 0
+        try: rate = float((ti.get("price") or {}).get("rate")) if ti.get("price") else None
+        except Exception: rate = None
+        fr, too = t.get("from"), t.get("to")
+        if fr and too: edges.append({"source": fr, "target": too, "amount": v, "tx": t.get("transactionHash"), "unit": sym, "time": t.get("timestamp"), "rate": rate})
+        hist.append({"tx": t.get("transactionHash"), "time": t.get("timestamp"), "delta": v if (too or "").lower() == al else -v, "unit": sym, "method": "token transfer (ethplorer)", "rate": rate})
+    return edges, hist, (isinstance(txs, list) or th is not None)
 async def eth_address(a, cursor=None, f=None, to=None, pages=1):
     out = {"chain": "eth", "unit": "ETH", "address": a}
     await ensure_prices()
+    t0 = time.time(); DEADLINE = float(os.environ.get("CHAINTRACE_ETH_DEADLINE", "18")); miss = []
     async def _hdr():
-        async def opt(coro, t):
-            try: return await asyncio.wait_for(coro, t)
-            except Exception: return None
-        info, bal, cnt = await asyncio.gather(get(f"{BS}/addresses/{a}"), opt(rpc(ETH_RPC, "eth_getBalance", [a, "latest"]), 6),
-                                              opt(get(f"{BS}/addresses/{a}/counters"), 6))
-        out["address"] = info["hash"]
+        # every source capped and concurrent; any of them may fail without failing the lookup
+        (info, e1), (cnt, e2), bal, code, nonce = await asyncio.gather(
+            _cap(get(f"{BS}/addresses/{a}"), BS_TIMEOUT), _cap(get(f"{BS}/addresses/{a}/counters"), min(6, BS_TIMEOUT)),
+            eth_rpc_any("eth_getBalance", [a, "latest"]), eth_rpc_any("eth_getCode", [a, "latest"]), eth_rpc_any("eth_getTransactionCount", [a, "latest"]))
+        if info: out["address"] = info.get("hash") or a
+        else: miss.append("address info")
         if bal: out["balance"] = int(bal, 16) / 1e18; out["balance_source"] = "rpc"
-        else: out["balance"] = int(info.get("coin_balance") or 0) / 1e18; out["balance_source"] = "blockscout"
-        out["is_contract"] = info.get("is_contract")
+        elif info: out["balance"] = int(info.get("coin_balance") or 0) / 1e18; out["balance_source"] = "blockscout"
+        else: out["balance"] = None; out["balance_source"] = "unavailable"
+        out["is_contract"] = info.get("is_contract") if info else (None if code is None else code not in ("0x", "0x0", ""))
         if cnt: out["tx_count"] = cnt.get("transactions_count"); out["token_transfers_count"] = cnt.get("token_transfers_count")
+        else:
+            miss.append("counters")
+            if nonce: out["tx_count"] = int(nonce, 16); out["tx_count_note"] = "outgoing txs (nonce) from RPC"
     hdr = asyncio.create_task(_hdr()) if not cursor else None   # runs concurrently with the history streams
     cur = dec(cursor) or {"t": None, "k": None, "i": None}
     al = a.lower(); ntags = {}; edges = []; hist = []
     def reg(x):
         if x and x.get("hash"): ntags.setdefault(x["hash"], _tags(x))
+    failed = set()
     for _ in range(max(1, pages)):
-        (tx, ct), (tt, ck), (it, ci) = await asyncio.gather(_bs_stream(a, "transactions", cur["t"]),
+        (tx, ct, f1), (tt, ck, f2), (it, ci, f3) = await asyncio.gather(_bs_stream(a, "transactions", cur["t"]),
             _bs_stream(a, "token-transfers", cur["k"]), _bs_stream(a, "internal-transactions", cur["i"]))
+        for n_, fl in (("transactions", f1), ("token transfers", f2), ("internal transactions", f3)):
+            if fl: failed.add(n_)
         cur = {"t": ct, "k": ck, "i": ci}; times = []
         for t in tx:
             fr, too = t.get("from"), t.get("to"); reg(fr); reg(too); ts = ts_of(t.get("timestamp")); times.append(ts)
@@ -400,10 +451,29 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
         times = [x for x in times if x]
         done = all(v == "done" for v in cur.values())
         if f and times and max(times) < f: done = True
-        if done or hist: break
-    if hdr: await hdr; a = out["address"]
+        if done or hist or failed or time.time() - t0 > DEADLINE: break
+    if "transactions" in failed and "token transfers" in failed and not cursor:
+        e2_, h2_, ok = await _ethplorer_history(a)
+        if ok: edges += e2_; hist += h2_; out["history_source"] = "ethplorer (fallback, last ~50 transfers)"
+        else: out["history_source"] = "unavailable"
+    if hdr:
+        try: await asyncio.wait_for(hdr, max(1, 22 - (time.time() - t0)))
+        except Exception: miss.append("header")
+        out.setdefault("balance", None)
+    # canonical address: from Blockscout info, else the checksummed form seen in edges, else as typed
+    if not out.get("address") or out["address"] == a:
+        seen = next((x for e in edges for x in (e["source"], e["target"]) if x.lower() == al and x != al), None)
+        out["address"] = seen or a
+    a = out["address"]
+    for e in edges:   # unify case of the focus address across sources
+        if e["source"].lower() == al: e["source"] = a
+        if e["target"].lower() == al: e["target"] = a
     out["nodes"], out["edges"], out["txs"] = _finish_page("eth", a, edges, hist, ntags)
     out["next"] = None if all(v == "done" for v in cur.values()) or (f and done) else enc(cur)
+    if failed or miss:
+        out["partial"] = True
+        out["warnings"] = [f"Some data unavailable from Blockscout ({', '.join(sorted(failed) + miss)}); showing partial results"
+                           + (f" — history from {out['history_source']}" if out.get("history_source") else "")]
     return out
 
 async def sol_address(a, cursor=None, f=None, to=None, pages=1, limit=15):
