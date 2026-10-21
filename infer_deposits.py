@@ -315,10 +315,11 @@ async def scan_chain(c, deadline, model):
     meta(db, f"finished_{c}", int(finished)); slog(c, "phase end; finished" if finished else "time budget used; will resume next run")
 def export_candidate(db=None):
     db = db or sdb(); import gzip; out = os.path.join(W, "candidate.jsonl.gz"); n = collections.Counter()
-    with gzip.open(out + ".tmp", "wt") as f:
-        for c, a, e in db.execute("SELECT chain,addr,ent FROM hubs WHERE src IN ('discovered','learned')"):
+    import io
+    with gzip.GzipFile(out + ".tmp", "wb", mtime=0) as gz, io.TextIOWrapper(gz, "utf-8") as f:   # mtime=0: byte-identical if unchanged
+        for c, a, e in db.execute("SELECT chain,addr,ent FROM hubs WHERE src IN ('discovered','learned') ORDER BY chain,addr"):
             f.write(json.dumps({"c": c, "a": a, "t": "hub", "e": e}, separators=(",", ":")) + "\n")
-        for c, a, e, p, ev in db.execute("SELECT chain,addr,ent,p,ev FROM results"):
+        for c, a, e, p, ev in db.execute("SELECT chain,addr,ent,p,ev FROM results ORDER BY chain,addr"):
             f.write(json.dumps({"c": c, "a": a, "t": "dep", "e": e, "p": p, "ev": json.loads(ev)}, separators=(",", ":")) + "\n"); n[c] += 1
     os.replace(out + ".tmp", out); slog("exported candidate", dict(n), f"{os.path.getsize(out)//1024} KB"); return out
 async def scan(hours, new_round):
@@ -329,6 +330,12 @@ async def scan(hours, new_round):
     await asyncio.gather(scan_chain("eth", deadline, model), scan_chain("sol", deadline, model))
     if meta(db, "finished_eth") == "1" and meta(db, "finished_sol") == "1": meta(db, "state", "finished")
     export_candidate(db); slog("scan exit; state", meta(db, "state"))
+    if os.environ.get("CT_PUBLISH_ON_EXIT") == "1":   # gate+publish even if the runner that started us is gone
+        import subprocess
+        sh = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_weekly_scan.sh")
+        subprocess.Popen([sh, "--publish-only"], env={**os.environ, "CT_DETACHED": "0", "CT_FOREGROUND": "0"},
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        slog("on-exit publish hook started")
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "scan":
     hrs = float(sys.argv[sys.argv.index("--hours") + 1]) if "--hours" in sys.argv else 30
     asyncio.run(scan(hrs, "--new-round" in sys.argv))
