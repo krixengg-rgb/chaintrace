@@ -209,7 +209,11 @@ def token_flags(tok, rate, v):
     if not v: fl.append("zero")
     rep = (tok.get("reputation") or "ok").lower()
     if rep not in ("ok", "") or SPAMNAME.search(f"{tok.get('name') or ''} {tok.get('symbol') or ''}"): fl.append("spam")
-    if rate is None and (tok.get("symbol") or "").upper() not in PRICE: fl.append("unpriced")
+    if rate is None and (tok.get("symbol") or "").upper() not in PRICE:
+        fl.append("unpriced")
+        try: many = int(tok.get("holders_count") or tok.get("holders") or 0) >= 20000
+        except Exception: many = False
+        if many and "spam" not in fl: fl.append("spam")   # airdrop heuristic: no market price but very widely distributed
     return fl
 def _agg_unit(edges, cap):
     m = {}
@@ -234,9 +238,10 @@ def counterparties(chain, focus, agg, raw=None, limit=150):
         elif t_ == fl and s_ != fl: cp, d = e["source"], "in"
         else: continue
         if cp.startswith("tx:") or cp == "coinbase": continue
-        x = cps.setdefault((cp, d), {"id": cp, "dir": d, "usd": 0.0, "count": 0, "units": {}, "first": None, "last": None, "flags": None})
+        x = cps.setdefault((cp, d), {"id": cp, "dir": d, "usd": 0.0, "count": 0, "units": {}, "uusd": {}, "ucount": {}, "first": None, "last": None, "flags": None})
         x["usd"] += e.get("usd") or 0; x["count"] += e.get("count", 1)
         x["units"][e["unit"]] = x["units"].get(e["unit"], 0) + (e.get("amount") or 0)
+        x["uusd"][e["unit"]] = round(x["uusd"].get(e["unit"], 0) + (e.get("usd") or 0), 2); x["ucount"][e["unit"]] = x["ucount"].get(e["unit"], 0) + e.get("count", 1)
         for k_, fn in (("first", min), ("last", max)):
             if e.get(k_): x[k_] = fn(x[k_] or e[k_], e[k_])
         x["flags"] = sorted(set(e.get("flags") or [])) if x["flags"] is None else sorted(set(x["flags"]) & set(e.get("flags") or []))
@@ -592,12 +597,14 @@ ADDR = {"btc": btc_address, "eth": eth_address, "sol": sol_address}
 
 def merge_cp(a, b):
     """merge two counterparties() results (pages)"""
-    m = {(x["id"], x["dir"]): dict(x, units=dict(x["units"])) for x in a.get("counterparties", [])}
+    cp_ = lambda x: dict(x, units=dict(x["units"]), uusd=dict(x.get("uusd") or {}), ucount=dict(x.get("ucount") or {}))
+    m = {(x["id"], x["dir"]): cp_(x) for x in a.get("counterparties", [])}
     for x in b.get("counterparties", []):
         k = (x["id"], x["dir"])
-        if k not in m: m[k] = dict(x, units=dict(x["units"])); continue
+        if k not in m: m[k] = cp_(x); continue
         y = m[k]; y["usd"] = round(y["usd"] + x["usd"], 2); y["count"] += x["count"]
-        for u, v in x["units"].items(): y["units"][u] = y["units"].get(u, 0) + v
+        for f_ in ("units", "uusd", "ucount"):
+            for u, v in (x.get(f_) or {}).items(): y[f_][u] = y[f_].get(u, 0) + v
         for k_, fn in (("first", min), ("last", max)):
             vals = [v for v in (y.get(k_), x.get(k_)) if v]; y[k_] = fn(vals) if vals else None
         y["flags"] = sorted(set(y.get("flags") or []) & set(x.get("flags") or []))

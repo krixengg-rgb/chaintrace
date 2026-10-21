@@ -86,7 +86,7 @@ def _cp_sugg(c, cps):
     for x in cps:
         if not x.get("kind") and not x.get("suggested"):
             s = deposits.lookup_batch(c, x["id"])
-            if s: x["suggested"] = {"label": f"{s['entity']} deposit", "confidence": s["confidence"], "method": s["method"]}
+            if s: x["suggested"] = {"label": f"{s['entity']} deposit", "entity": s["entity"], "category": "exchange-deposit", "confidence": s["confidence"], "method": s["method"]}
 @app.get("/api/counterparties")
 async def counterparties(q: str, pages: int = 1, cursor: str | None = None, date_from: int | None = None, date_to: int | None = None):
     """top inflow/outflow counterparties of an address over 1-5 history pages (bounded by a 20s budget)"""
