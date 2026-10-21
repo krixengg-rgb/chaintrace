@@ -62,7 +62,7 @@ cy.style().selector('node[?grp]').style({'background-image':'none','background-c
  .selector('edge[?meta]').style({'line-style':'solid',color:'#d9d2ff','font-size':8})
  .selector('edge.din').style({'line-color':'#2ee59d','target-arrow-color':'#2ee59d',color:'#9ff2cf','z-index':7})
  .selector('edge.dout').style({'line-color':'#ff6b81','target-arrow-color':'#ff6b81',color:'#ffc2cd','z-index':7})
- .selector('.noise').style({display:'none'}).selector('.gmem').style({display:'none'})
+ .selector('edge[?tmp]').style({opacity:0,label:'','target-arrow-shape':'none'}).selector('.glay').style({display:'none'}).selector('.noise').style({display:'none'}).selector('.gmem').style({display:'none'})
  .selector(':selected').style({'border-width':4,'border-color':'#f6c945'}).update();
 const css=document.createElement('style');css.textContent=`
 #vtools{position:absolute;left:10px;top:10px;z-index:5;display:flex;flex-wrap:wrap;gap:5px;align-items:center;padding:5px 6px;border-radius:12px;font-size:11.5px;max-width:calc(100% - 70px)}
@@ -85,7 +85,12 @@ window.ctSet=(k,v)=>{if(k==='min')V.min=Math.max(0,+v||0);else if(k==='unpriced'
  if(cur&&mode==='lookup'&&$('side').innerHTML)render(cur);else cpRender()};
 tools();
 // ---------- hooks ----------
-const _relayout=relayout;window.relayout=function(){if(window._noLay)return;_relayout()};
+const _relayout=relayout;window.relayout=function(){if(window._noLay)return;const gs=cy.nodes('[?grp]').filter(g=>!g.data('collapsed'));if(!gs.length)return _relayout();
+ // cose handles compound nodes badly (groups drift far away): lay out flat with short invisible spring edges between members, then re-parent
+ const mem=[];cy.batch(()=>{gs.forEach(g=>{const k=g.children();mem.push([g.id(),k]);k.move({parent:null})});gs.addClass('glay')});const tmp=[];
+ for(const[,k]of mem)k.slice(1).forEach(b=>tmp.push({group:'edges',data:{id:'tmp:'+k[0].id()+'~'+b.id(),source:k[0].id(),target:b.id(),tmp:1}}));
+ const T=cy.add(tmp);const L=cy.elements().not('[?grp]').not('.gmem').not('.noise').layout({...lay(),idealEdgeLength:e=>e.data('tmp')?30:120,edgeElasticity:e=>e.data('tmp')?400:80});
+ L.one('layoutstop',()=>{cy.batch(()=>{cy.remove(T);mem.forEach(([g,k])=>k.move({parent:g}));cy.nodes('[?grp]').removeClass('glay')})});L.run()};
 const _add=add;window.add=function(d,focus){const n0=cy.nodes().length;window._noLay=1;try{_add(d,focus)}finally{window._noLay=0}
  const grew=cy.nodes().length!==n0;refresh(false);if(grew)relayout()};
 const _hl=highlight;window.highlight=function(j){_hl(j);applyNoise();applyDir()};
@@ -95,7 +100,7 @@ const _snap=snapshot;window.snapshot=function(){const s=_snap();s.graph.nodes=s.
 const _open=openCase;window.openCase=async function(id){await _open(id);restoring=true;try{refresh(false)}finally{restoring=false}};
 const _render=render;window.render=function(d){let dd=d,hid=0;if(V.noise&&d&&d.txs){const k=d.txs.filter(t=>!noisy(t));hid=d.txs.length-k.length;dd=Object.assign({},d,{txs:k})}
  _render(dd);if(hid){const h=[...$('side').querySelectorAll('.card h3')].find(x=>x.textContent.startsWith('Activity'));if(h&&h.querySelector('.dim'))h.querySelector('.dim').textContent+=' · '+hid+' noise hidden'}
- if(d&&d.kind==='address'&&d.address){CPV=d.address;cpRender()}};
+ if(d&&d.kind==='address'&&d.address){if(d.cp&&!CPS[d.address])cpFeed(d.address,d.chain,d.cp,d.next,true);CPV=d.address;cpRender()}};
 const _api=api;window.api=async function(q,cursor){const j=await _api(q,cursor);try{if(j&&j.cp&&j.address)cpFeed(j.address,j.chain,j.cp,j.next,!cursor)}catch(e){console.warn(e)}return j};
 // ---------- counterparties ----------
 const CPS={};let CPV=null;const F={dir:'all',tok:'',min:0,from:'',to:'',n:10,all:false};
@@ -124,14 +129,14 @@ function hist(o){const fr=F.from?Date.parse(F.from)/1000:0,to=F.to?Date.parse(F.
  if(s.length<2)return'<div class="meta">Not enough dated flows for a histogram.</div>';
  const t0=s[0][0],t1=s[s.length-1][0]||t0+1,N=32,w=(t1-t0)/N||1,useUsd=s.some(r=>r[1]>0),I=Array(N).fill(0),O=Array(N).fill(0);
  for(const r of s){const i=Math.min(N-1,Math.floor((r[0]-t0)/w));(r[2]==='in'?I:O)[i]+=useUsd?r[1]:1}
- const mx=Math.max(...I,...O)||1,bw=300/N;let g='';
- for(let i=0;i<N;i++){const a=I[i]/mx*33,b=O[i]/mx*33,tt=day(t0+i*w)+(N>1?' → '+day(t0+(i+1)*w):'');
+ const sq=Math.sqrt,mx=sq(Math.max(...I,...O)||1),bw=300/N,lab=t=>t1-t0<172800?tfmt(t).slice(5):day(t);let g='';
+ for(let i=0;i<N;i++){const a=sq(I[i])/mx*33,b=sq(O[i])/mx*33,tt=lab(t0+i*w)+' → '+lab(t0+(i+1)*w);
   if(a)g+=`<rect x="${i*bw+.5}" y="${35-a}" width="${bw-1}" height="${a}" fill="#2ee59d"><title>${tt}: in ${useUsd?usd(I[i]):I[i]+' transfers'}</title></rect>`;
   if(b)g+=`<rect x="${i*bw+.5}" y="36" width="${bw-1}" height="${b}" fill="#ff6b81"><title>${tt}: out ${useUsd?usd(O[i]):O[i]+' transfers'}</title></rect>`}
  return`<svg viewBox="0 0 300 70" preserveAspectRatio="none"><line x1="0" y1="35.5" x2="300" y2="35.5" stroke="rgba(255,255,255,.15)"/>${g}</svg>
- <div class="meta" style="display:flex"><span>${day(t0)}</span><span class="sp" style="flex:1;text-align:center">${useUsd?'USD':'transfers'} · <span class="in">▲ in</span> <span class="out">▼ out</span> · ${s.length} flows</span><span>${day(t1)}</span></div>`}
+ <div class="meta" style="display:flex"><span>${lab(t0)}</span><span class="sp" style="flex:1;text-align:center">${useUsd?'USD (√ scale)':'transfers'} · <span class="in">▲ in</span> <span class="out">▼ out</span> · ${s.length} flows</span><span>${lab(t1)}</span></div>`}
 function badge(x){return x.kind?tagH(x.kind):x.suggested?`<span class="tag sg" title="${esc(x.suggested.method||'')}">≈ ${esc(x.suggested.label)} ${Math.floor((x.suggested.confidence||0)*100)}%</span>`:''}
-function cpRender(){let el=$('cpp');if(!el){el=document.createElement('div');el.id='cpp';$('side').after(el)}
+function cpRender(){let el=$('cpp');if(!el||!el.isConnected){el=el||document.createElement('div');el.id='cpp';const f=$('side').querySelector('.card');f?f.after(el):$('side').appendChild(el)}
  const o=CPS[CPV];if(!CPV){el.innerHTML='';return}
  const head=`<h3>⇆ Counterparties<span class="sp"></span><span class="dim" style="text-transform:none;letter-spacing:0">${esc(short(CPV))}${o?' · '+o.pages+' page(s)':''}</span></h3>`;
  if(!o){el.innerHTML=`<div class="card glass">${head}<div class="dim" style="font-size:12.5px">Not loaded yet for this address.</div><div class="row"><button class="btn sm pri" id="cpmore" onclick="ctCpLoad('${esc(CPV)}')">Load counterparties</button></div></div>`;return}
