@@ -63,6 +63,7 @@ def finish(d):
             except Exception as ex: print("suggest failed", ex)
         if focus and focus in by and by[focus].get("suggested"): d["suggestion"] = by[focus]["suggested"]
     for n in d["nodes"]: n["flag"] = n.get("kind") in labels.EXPO
+    if d.get("cp"): _cp_sugg(c, d["cp"].get("counterparties") or [])
     if d.get("balance") is not None: d["balance_usd"] = chains.usd_of(d["balance"], d.get("unit"))
     d["price_usd"] = chains.PRICE.get((d.get("unit") or "").upper())
     return d
@@ -80,6 +81,27 @@ async def lookup(q: str, chain: str | None = None, cursor: str | None = None, da
     except asyncio.TimeoutError: raise HTTPException(504, f"{c} data sources too slow right now (>{LOOKUP_TIMEOUT:.0f}s); please retry")
     except Exception as e: raise HTTPException(502, f"{c} upstream error: {e}")
     d["kind"] = kind; return finish(d)
+def _cp_sugg(c, cps):
+    if c not in deposits.NATIVE: return
+    for x in cps:
+        if not x.get("kind") and not x.get("suggested"):
+            s = deposits.lookup_batch(c, x["id"])
+            if s: x["suggested"] = {"label": f"{s['entity']} deposit", "confidence": s["confidence"], "method": s["method"]}
+@app.get("/api/counterparties")
+async def counterparties(q: str, pages: int = 1, cursor: str | None = None, date_from: int | None = None, date_to: int | None = None):
+    """top inflow/outflow counterparties of an address over 1-5 history pages (bounded by a 20s budget)"""
+    c, kind = chains.detect(q)
+    if not c or kind != "address": raise HTTPException(400, "counterparties need an address")
+    pages = max(1, min(5, pages)); t0 = _t.time(); res = {"counterparties": [], "series": []}; nxt = cursor; n = 0; partial = []
+    while n < pages and _t.time() - t0 < 18:
+        try: d = await asyncio.wait_for(chains.ADDR[c](q.strip(), cursor=nxt, f=date_from, to=date_to), max(3, 22 - (_t.time() - t0)))
+        except Exception as e:
+            if n == 0: raise HTTPException(502, f"{c} upstream error: {e}")
+            partial.append(f"stopped after {n} page(s): {type(e).__name__}"); break
+        res = chains.merge_cp(res, d.get("cp") or {}); n += 1; nxt = d.get("next"); partial += d.get("warnings") or []
+        if not nxt: break
+    _cp_sugg(c, res["counterparties"])
+    return {"chain": c, "address": q.strip(), "pages": n, "next": nxt, "warnings": partial, **res}
 @app.post("/api/trace")
 async def trace_start(q: str, hops: int = 2, direction: str = "forward", topk: int = 3, max_nodes: int = 120):
     c, kind = chains.detect(q)

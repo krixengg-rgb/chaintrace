@@ -4,14 +4,22 @@ JOBS = {}
 from labels import EXPO, RISK
 TERMINAL = set(RISK) - {"other"}
 ORDER = sorted(RISK, key=lambda k: -RISK[k])
-def _rank(cands):
-    # rank by USD value when priced (comparable across currencies); unpriced flows fall back to
-    # per-unit normalised amount and are placed after priced ones of similar weight
+NOISE = {"spam", "zero", "approval"}
+def _rank(cands, lab=None, focus=None):
+    """noise filtered, then score = USD x frequency x label weight (unpriced flows fall back to per-unit normalised amount)"""
+    import math
+    from labels import EXPO
+    cands = [e for e in cands if not (set(e.get("flags") or []) & NOISE)]
+    lab = lab or {}
+    def w(e):
+        o = e["target"] if e["source"] == focus else e["source"]; k = (lab.get(o) or {}).get("kind")
+        return 1.5 if k in EXPO else 1.2 if k else 1.0
+    freq = lambda e: 1 + 0.3 * math.log(max(1, e.get("count", 1)))
     if any(e.get("usd") for e in cands):
-        return sorted(cands, key=lambda e: -((e.get("usd") or 0) + 0.01 * e.get("count", 1)))
+        return sorted(cands, key=lambda e: -((e.get("usd") or 0) * freq(e) * w(e) + 0.01 * e.get("count", 1)))
     mx = {}
     for e in cands: mx[e["unit"]] = max(mx.get(e["unit"], 0), e["amount"] or 0)
-    return sorted(cands, key=lambda e: -((e["amount"] or 0) / (mx[e["unit"]] or 1) + 0.05 * e.get("count", 1)))
+    return sorted(cands, key=lambda e: -((e["amount"] or 0) / (mx[e["unit"]] or 1) * freq(e) * w(e)))
 async def run(job, q, hops, direction, topk, max_nodes):
     c, kind = chains.detect(q)
     J = JOBS[job]; J.update(chain=c, status="running")
@@ -50,8 +58,8 @@ async def run(job, q, hops, direction, topk, max_nodes):
                 if a == root: J["summary"] = {k: d.get(k) for k in ("balance", "unit", "tx_count", "address")}
                 fw = [e for e in d["edges"] if e["source"] == a and e["target"] != a]
                 bw = [e for e in d["edges"] if e["target"] == a and e["source"] != a]
-                pick = (_rank(fw)[:topk] if direction in ("forward", "both") else []) + (_rank(bw)[:topk] if direction in ("backward", "both") else [])
                 lab = {n["id"]: n for n in d["nodes"]}
+                pick = (_rank(fw, lab, a)[:topk] if direction in ("forward", "both") else []) + (_rank(bw, lab, a)[:topk] if direction in ("backward", "both") else [])
                 for e in pick:
                     other = e["target"] if e["source"] == a else e["source"]
                     if len(nodes) >= max_nodes and other not in nodes: J["capped"] = True; continue

@@ -16,6 +16,7 @@ def _open_cache():
 DB = _open_cache(); DB.execute("PRAGMA cache_size=-4000")
 _writes = [0]
 WARN = []
+CP_LAST = [None]   # counterparties of the most recent page (read synchronously right after ADDR returns)
 NEG = {}
 STATS = {"hit": 0, "miss": 0}
 class _C:
@@ -151,8 +152,13 @@ def _agg(edges, cap):
     m = {}
     for e in edges:
         k = (e["source"], e["target"])
-        if k in m: m[k]["amount"] += e["amount"]; m[k]["count"] += 1
-        else: m[k] = {**e, "count": 1}
+        t = e.get("time") if isinstance(e.get("time"), (int, float)) else ts_of(e.get("time"))
+        if k in m:
+            x = m[k]; x["amount"] += e["amount"]; x["count"] += 1
+            if t: x["first"] = min(x.get("first") or t, t); x["last"] = max(x.get("last") or t, t)
+            if e.get("flags"): x["flags"] = sorted(set(x.get("flags") or []) & set(e["flags"]))   # flagged only if every transfer is
+            else: x["flags"] = []
+        else: m[k] = {**e, "count": 1, "first": t, "last": t, "flags": list(e.get("flags") or [])}
     return sorted(m.values(), key=lambda e: -e["amount"])[:cap]
 
 # ---------------- ETH (Blockscout + public RPC) ----------------
@@ -195,15 +201,56 @@ async def eth_address(a, limit=40):
     hist.sort(key=lambda h: h.get("time") or "", reverse=True)
     return {"chain":"eth","address":info["hash"],"balance":bal,"balance_source":src,"unit":"ETH","tx_count":tc,
             "is_contract":info.get("is_contract"),"txs":hist[:60],"nodes":list(nodes.values()),"edges":edges}
+# ---- noise flags: 'zero' value, 'approval' calls, 'spam' tokens (Blockscout reputation / URL-like names), 'unpriced' tokens
+APPROVE = re.compile(r"approv|allowance|setApprovalForAll|permit", re.I)
+SPAMNAME = re.compile(r"https?:|www\.|\.(com|io|org|net|xyz|app|site|top|finance|gift)\b|t\.me|claim|reward|visit|airdrop|voucher|\$ ?\d|✅|🎁", re.I)
+def token_flags(tok, rate, v):
+    fl = []
+    if not v: fl.append("zero")
+    rep = (tok.get("reputation") or "ok").lower()
+    if rep not in ("ok", "") or SPAMNAME.search(f"{tok.get('name') or ''} {tok.get('symbol') or ''}"): fl.append("spam")
+    if rate is None and (tok.get("symbol") or "").upper() not in PRICE: fl.append("unpriced")
+    return fl
 def _agg_unit(edges, cap):
     m = {}
     for e in edges:
         k = (e["source"], e["target"], e["unit"])
-        if k in m: m[k]["amount"] += e["amount"]; m[k]["count"] += 1
-        else: m[k] = {**e, "count": 1}
+        t = e.get("time") if isinstance(e.get("time"), (int, float)) else ts_of(e.get("time"))
+        if k in m:
+            x = m[k]; x["amount"] += e["amount"]; x["count"] += 1
+            if t: x["first"] = min(x.get("first") or t, t); x["last"] = max(x.get("last") or t, t)
+            if e.get("flags"): x["flags"] = sorted(set(x.get("flags") or []) & set(e["flags"]))   # flagged only if every transfer is
+            else: x["flags"] = []
+        else: m[k] = {**e, "count": 1, "first": t, "last": t, "flags": list(e.get("flags") or [])}
     for e in m.values(): e["usd"] = usd_of(e["amount"], e["unit"], e.pop("rate", None))
     # keep the biggest flows by USD where known, then by frequency
     return sorted(m.values(), key=lambda e: (-(e["usd"] or 0), -e["count"]))[:cap]
+def counterparties(chain, focus, agg, raw=None, limit=150):
+    """per (counterparty, direction) summary of flows touching `focus`: USD, per-token amounts, tx count, first/last seen, flags"""
+    fl = focus.lower() if chain == "eth" else focus; cps = {}
+    for e in agg:
+        s_, t_ = (e["source"].lower(), e["target"].lower()) if chain == "eth" else (e["source"], e["target"])
+        if s_ == fl and t_ != fl: cp, d = e["target"], "out"
+        elif t_ == fl and s_ != fl: cp, d = e["source"], "in"
+        else: continue
+        if cp.startswith("tx:") or cp == "coinbase": continue
+        x = cps.setdefault((cp, d), {"id": cp, "dir": d, "usd": 0.0, "count": 0, "units": {}, "first": None, "last": None, "flags": None})
+        x["usd"] += e.get("usd") or 0; x["count"] += e.get("count", 1)
+        x["units"][e["unit"]] = x["units"].get(e["unit"], 0) + (e.get("amount") or 0)
+        for k_, fn in (("first", min), ("last", max)):
+            if e.get(k_): x[k_] = fn(x[k_] or e[k_], e[k_])
+        x["flags"] = sorted(set(e.get("flags") or [])) if x["flags"] is None else sorted(set(x["flags"]) & set(e.get("flags") or []))
+    out = sorted(cps.values(), key=lambda x: (-x["usd"], -x["count"]))[:limit]
+    for x in out:
+        x["usd"] = round(x["usd"], 2); n = node(chain, x["id"])
+        x.update(name=n.get("name"), kind=n.get("kind"), risk=n.get("risk"))
+    series = []
+    for e in (raw or []):
+        s_, t_ = (e["source"].lower(), e["target"].lower()) if chain == "eth" else (e["source"], e["target"])
+        if fl not in (s_, t_) or s_ == t_: continue
+        t = e.get("time") if isinstance(e.get("time"), (int, float)) else ts_of(e.get("time"))
+        if t: series.append([t, round(usd_of(e.get("amount"), e.get("unit"), e.get("rate")) or 0, 2), "out" if s_ == fl else "in", e["unit"], 1 if e.get("flags") else 0])
+    series.sort(); return {"counterparties": out, "series": series[-800:]}
 async def eth_tx(h):
     (t, err), (tt_, _) = await asyncio.gather(_cap(get(f"{BS}/transactions/{h}"), BS_TIMEOUT + 3), _cap(get(f"{BS}/transactions/{h}/token-transfers"), BS_TIMEOUT))
     if t is None: raise Exception(f"Blockscout transaction endpoint unavailable ({err}); try again shortly")
@@ -300,7 +347,9 @@ TX = {"btc": btc_tx, "eth": eth_tx, "sol": sol_tx}
 def _inrange(t, f, to):
     return t is None or ((f is None or t >= f) and (to is None or t <= to))
 def _finish_page(chain, focus, edges, hist, ntags=None, cap=60):
-    edges = _agg_unit(edges, cap); ntags = ntags or {}
+    raw = edges; agg = _agg_unit([dict(e) for e in edges], 10 ** 9); edges = agg[:cap]; ntags = ntags or {}
+    try: CP_LAST[0] = counterparties(chain, focus, agg, raw)
+    except Exception as ex: CP_LAST[0] = {"counterparties": [], "series": [], "error": str(ex)}
     nodes = {focus: node(chain, focus, ntags.get(focus))}
     for e in edges:
         for k in ("source", "target"): nodes.setdefault(e[k], node(chain, e[k], ntags.get(e[k])))
@@ -341,7 +390,7 @@ async def btc_address(a, cursor=None, f=None, to=None, pages=1):
         oldest = min((x["status"].get("block_time") or 9e12 for x in txs), default=None)
         if not cursor or (f and oldest and oldest < f): cursor = None if (f and oldest and oldest < f) else cursor; break
         if hist: break  # got something in range; let user click "load more"
-    out["nodes"], out["edges"], out["txs"] = _finish_page("btc", a, edges, hist)
+    out["nodes"], out["edges"], out["txs"] = _finish_page("btc", a, edges, hist); out["cp"] = CP_LAST[0]
     out["cluster"] = sorted(cluster); out["next"] = cursor
     return out
 
@@ -438,8 +487,9 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
             fr, too = t.get("from"), t.get("to"); reg(fr); reg(too); ts = ts_of(t.get("timestamp")); times.append(ts)
             if not _inrange(ts, f, to): continue
             v = int(t.get("value") or 0) / 1e18
-            if fr and too: edges.append({"source": fr["hash"], "target": too["hash"], "amount": v, "tx": t["hash"], "unit": "ETH", "time": ts})
-            hist.append({"tx": t["hash"], "time": ts, "delta": v if (too and too["hash"].lower()==al) else -v, "unit": "ETH", "method": t.get("method"), "status": t.get("status")})
+            fl = (["zero"] if not v else []) + (["approval"] if APPROVE.search(t.get("method") or "") else [])
+            if fr and too: edges.append({"source": fr["hash"], "target": too["hash"], "amount": v, "tx": t["hash"], "unit": "ETH", "time": ts, "flags": fl})
+            hist.append({"tx": t["hash"], "time": ts, "delta": v if (too and too["hash"].lower()==al) else -v, "unit": "ETH", "method": t.get("method"), "status": t.get("status"), "flags": fl})
         for t in tt:
             fr, too = t.get("from"), t.get("to"); reg(fr); reg(too); ts = ts_of(t.get("timestamp")); times.append(ts)
             if not _inrange(ts, f, to): continue
@@ -449,8 +499,9 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
             sym = tok.get("symbol") or "TOKEN"
             try: rate = float(tok.get("exchange_rate")) if tok.get("exchange_rate") else None
             except Exception: rate = None
-            if fr and too: edges.append({"source": fr["hash"], "target": too["hash"], "amount": v, "tx": t.get("transaction_hash"), "unit": sym, "time": ts, "rate": rate})
-            hist.append({"tx": t.get("transaction_hash"), "time": ts, "delta": v if (too and too["hash"].lower()==al) else -v, "unit": sym, "method": "token transfer", "rate": rate})
+            fl = token_flags(tok, rate, v)
+            if fr and too: edges.append({"source": fr["hash"], "target": too["hash"], "amount": v, "tx": t.get("transaction_hash"), "unit": sym, "time": ts, "rate": rate, "flags": fl})
+            hist.append({"tx": t.get("transaction_hash"), "time": ts, "delta": v if (too and too["hash"].lower()==al) else -v, "unit": sym, "method": "token transfer", "rate": rate, "flags": fl})
         for t in it:
             fr, too = t.get("from"), t.get("to"); reg(fr); reg(too); ts = ts_of(t.get("timestamp")); times.append(ts)
             v = int(t.get("value") or 0) / 1e18
@@ -488,7 +539,7 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
     for e in edges:   # unify case of the focus address across sources
         if e["source"].lower() == al: e["source"] = a
         if e["target"].lower() == al: e["target"] = a
-    out["nodes"], out["edges"], out["txs"] = _finish_page("eth", a, edges, hist, ntags)
+    out["nodes"], out["edges"], out["txs"] = _finish_page("eth", a, edges, hist, ntags); out["cp"] = CP_LAST[0]
     out["next"] = None if all(v == "done" for v in cur.values()) or (f and done) else enc(cur)
     if failed or miss:
         out["partial"] = True
@@ -533,8 +584,22 @@ async def sol_address(a, cursor=None, f=None, to=None, pages=1, limit=15):
                          "status": "error" if s.get("err") else "ok", "method": f"{len(tr)} transfer(s)"})
         if stop: nxt = None
         if not nxt or hist: break
-    out["nodes"], out["edges"], out["txs"] = _finish_page("sol", a, edges, hist)
+    out["nodes"], out["edges"], out["txs"] = _finish_page("sol", a, edges, hist); out["cp"] = CP_LAST[0]
     out["tx_count"] = "paged"; out["next"] = nxt
     return out
 
 ADDR = {"btc": btc_address, "eth": eth_address, "sol": sol_address}
+
+def merge_cp(a, b):
+    """merge two counterparties() results (pages)"""
+    m = {(x["id"], x["dir"]): dict(x, units=dict(x["units"])) for x in a.get("counterparties", [])}
+    for x in b.get("counterparties", []):
+        k = (x["id"], x["dir"])
+        if k not in m: m[k] = dict(x, units=dict(x["units"])); continue
+        y = m[k]; y["usd"] = round(y["usd"] + x["usd"], 2); y["count"] += x["count"]
+        for u, v in x["units"].items(): y["units"][u] = y["units"].get(u, 0) + v
+        for k_, fn in (("first", min), ("last", max)):
+            vals = [v for v in (y.get(k_), x.get(k_)) if v]; y[k_] = fn(vals) if vals else None
+        y["flags"] = sorted(set(y.get("flags") or []) & set(x.get("flags") or []))
+    ser = sorted((a.get("series") or []) + (b.get("series") or []))
+    return {"counterparties": sorted(m.values(), key=lambda x: (-x["usd"], -x["count"]))[:300], "series": ser[-1500:]}

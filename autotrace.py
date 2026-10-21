@@ -11,6 +11,7 @@ async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, s
     nodes, edges, parent, depth_of = {}, {}, {}, {}
     sem = asyncio.Semaphore(SEM.get(c, 2)); stop = None
     def keep(e):   # dust / spam filter
+        if set(e.get("flags") or []) & trace.NOISE: return False
         if e.get("usd") is None: return not skip_unpriced and e.get("unit") == {"btc": "BTC", "eth": "ETH", "sol": "SOL"}[c]
         return e["usd"] >= min_usd
     def take(a, e, other, d, nxt, lab):
@@ -21,7 +22,7 @@ async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, s
         edges[(e["source"], e["target"], e.get("unit"))] = e
         if other not in parent: parent[other] = (a, e); depth_of[other] = d; nxt.append(other)
     if kind == "address":
-        d0 = await chains.ADDR[c](q); root = d0["address"]
+        d0 = await chains.ADDR[c](q); d0.pop("cp", None); root = d0["address"]
         J["summary"] = {k: d0.get(k) for k in ("balance", "unit", "tx_count", "address", "balance_usd")}
         J["summary"]["balance_usd"] = chains.usd_of(d0.get("balance"), d0.get("unit"))
         nodes[root] = next((n for n in d0["nodes"] if n["id"] == root), chains.node(c, root)); cache = {root: d0}; frontier = [root]
@@ -37,7 +38,8 @@ async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, s
     parent[root] = None; depth_of[root] = 0; J["root"] = root; seen = set()
     async def fetch(a):
         if a in cache: return cache.pop(a)
-        async with sem: return await chains.ADDR[c](a)
+        async with sem:
+            d_ = await chains.ADDR[c](a); d_.pop("cp", None); return d_
     while frontier and not stop:
         hop = depth_of[frontier[0]]
         todo = [a for a in frontier if a not in seen and not a.startswith("tx:") and a != "coinbase"
@@ -61,7 +63,7 @@ async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, s
                 elif a != root and nodes.get(a, {}).get("kind") in ENDPOINT: continue
                 if direction == "forward": cand = [e for e in d["edges"] if e["source"] == a and e["target"] != a and keep(e)]
                 else: cand = [e for e in d["edges"] if e["target"] == a and e["source"] != a and keep(e)]
-                for e in trace._rank(cand)[:topk]:
+                for e in trace._rank(cand, lab, a)[:topk]:
                     take(a, e, e["target"] if direction == "forward" else e["source"], hop + 1, nxt, lab)
                 J["nodes"], J["edges"] = list(nodes.values()), list(edges.values())
             if len(nodes) >= max_nodes: stop = f"node cap ({max_nodes}) reached"; break
