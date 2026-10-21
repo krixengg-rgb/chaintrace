@@ -96,7 +96,7 @@ const _add=add;window.add=function(d,focus){const n0=cy.nodes().length;window._n
 const _hl=highlight;window.highlight=function(j){_hl(j);applyNoise();applyDir()};
 const _expand=expand;window.expand=function(id){if(String(id).startsWith('grp:'))return toggleGroup(cy.getElementById(id));return _expand(id)};
 const _snap=snapshot;window.snapshot=function(){const s=_snap();s.graph.nodes=s.graph.nodes.filter(x=>!x.data.grp).map(x=>{const d={...x.data};delete d.parent;delete d.gof;return{data:d,position:x.position}});
- s.graph.edges=s.graph.edges.filter(d=>!d.meta);return s};
+ s.graph.edges=s.graph.edges.filter(d=>!d.meta&&!d.tmp);return s};
 const _open=openCase;window.openCase=async function(id){await _open(id);restoring=true;try{refresh(false)}finally{restoring=false}};
 const _render=render;window.render=function(d){let dd=d,hid=0;if(V.noise&&d&&d.txs){const k=d.txs.filter(t=>!noisy(t));hid=d.txs.length-k.length;dd=Object.assign({},d,{txs:k})}
  _render(dd);if(hid){const h=[...$('side').querySelectorAll('.card h3')].find(x=>x.textContent.startsWith('Activity'));if(h&&h.querySelector('.dim'))h.querySelector('.dim').textContent+=' · '+hid+' noise hidden'}

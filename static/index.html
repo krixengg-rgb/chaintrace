@@ -287,11 +287,11 @@ function dl(name,blob){const a=document.createElement('a');a.href=URL.createObje
 const base=()=>'chaintrace-'+($('q').value.trim().slice(0,12)||'graph');
 function exportPNG(){if(!cy.nodes().length)return toast('Nothing to export');dl(base()+'.png',cy.png({full:true,scale:2,bg:'#070a12',output:'blob'}))}
 function exportCSV(){const rows=[['source','target','amount','unit','usd','count','tx','source_label','target_label']];
- cy.edges().forEach(e=>{const x=e.data('info');const sl=cy.getElementById(x.source).data('info')||{},tl=cy.getElementById(x.target).data('info')||{};
+ cy.edges().filter(e=>!e.data('meta')&&!e.data('tmp')).forEach(e=>{const x=e.data('info');const sl=cy.getElementById(x.source).data('info')||{},tl=cy.getElementById(x.target).data('info')||{};
   rows.push([x.source,x.target,x.amount,x.unit||'',x.usd||'',x.count||1,x.tx||'',(sl.kind||'')+(sl.name?':'+sl.name:''),(tl.kind||'')+(tl.name?':'+tl.name:'')])});
  dl(base()+'-flows.csv',new Blob([rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'}))}
 function exportJSON(){if(curCase)return exportCase();const o={query:$('q').value.trim(),exported:new Date().toISOString(),mode,trace:mode==='trace'?lastTrace:null,lookup:mode==='lookup'?cur:null,
- nodes:cy.nodes().map(n=>n.data('info')),edges:cy.edges().map(e=>e.data('info'))};dl(base()+'.json',new Blob([JSON.stringify(o,null,1)],{type:'application/json'}))}
+ nodes:cy.nodes().filter(n=>!n.data('grp')).map(n=>n.data('info')),edges:cy.edges().filter(e=>!e.data('meta')&&!e.data('tmp')).map(e=>e.data('info'))};dl(base()+'.json',new Blob([JSON.stringify(o,null,1)],{type:'application/json'}))}
 function copyLink(){share();copy(location.href);exportMenu.classList.remove('open')}
 document.addEventListener('click',e=>{if(!exportMenu.contains(e.target))exportMenu.classList.remove('open')});
 // ---------- case storage (interface: list/get/put/del; swap for a hosted DB later) ----------
