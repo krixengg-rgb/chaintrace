@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-import asyncio, chains, labels, os, trace, autotrace, deposits
+import asyncio, chains, labels, os, trace, autotrace, deposits, bridges
 app = FastAPI(title="ChainTrace")
 # ---- auth + rate limiting (public exposure) ----
 import secrets, base64, time as _t, collections
@@ -62,6 +62,9 @@ def finish(d):
             try: deposits.decorate(by[focus], deposits.suggest(c, focus, d), endpoint_at=9)
             except Exception as ex: print("suggest failed", ex)
         if focus and focus in by and by[focus].get("suggested"): d["suggestion"] = by[focus]["suggested"]
+    if c in ("btc", "eth", "sol"):
+        for n in d["nodes"]:
+            if not n.get("kind") and not str(n["id"]).startswith("tx:"): bridges.decorate_vault(n, c)   # live THORChain/Maya vaults = bridge
     for n in d["nodes"]: n["flag"] = n.get("kind") in labels.EXPO
     if d.get("cp"): _cp_sugg(c, d["cp"].get("counterparties") or [])
     if d.get("balance") is not None: d["balance_usd"] = chains.usd_of(d["balance"], d.get("unit"))
@@ -69,6 +72,7 @@ def finish(d):
     return d
 @app.get("/api/lookup")
 async def lookup(q: str, chain: str | None = None, cursor: str | None = None, date_from: int | None = None, date_to: int | None = None):
+    if _t.time() - bridges._vts[0] > 3600: asyncio.create_task(bridges.refresh_vaults())
     c, kind = chains.detect(q)
     if chain and c and chain != c and kind == "address": c = chain
     if not c: raise HTTPException(400, "Unrecognised address / tx hash")
@@ -113,7 +117,7 @@ async def trace_start(q: str, hops: int = 2, direction: str = "forward", topk: i
     return {"job": trace.start(q.strip(), hops, direction, topk, max_nodes)}
 @app.post("/api/autotrace")
 async def autotrace_start(q: str, direction: str = "forward", max_hops: int = 6, max_nodes: int = 150, max_secs: int = 120,
-                          min_usd: float = 100, topk: int = 3, skip_unpriced: bool = True):
+                          min_usd: float = 100, topk: int = 3, skip_unpriced: bool = True, follow_bridges: bool = False):
     c, kind = chains.detect(q)
     if not c: raise HTTPException(400, "Unrecognised address / tx hash")
     if direction not in ("forward", "backward"): raise HTTPException(400, "direction must be forward or backward")
@@ -121,7 +125,7 @@ async def autotrace_start(q: str, direction: str = "forward", max_hops: int = 6,
     topk = max(1, min(6, topk)); min_usd = max(0.0, min_usd)
     if sum(1 for j in trace.JOBS.values() if j["status"] in ("queued", "running")) >= MAX_RUNNING_TRACES:
         raise HTTPException(429, "too many traces running, try again shortly")
-    return {"job": autotrace.start(q.strip(), direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced)}
+    return {"job": autotrace.start(q.strip(), direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges)}
 @app.get("/api/trace/{job}")
 def trace_get(job: str):
     j = trace.JOBS.get(job)
@@ -131,6 +135,27 @@ def trace_get(job: str):
 def trace_cancel(job: str):
     if job not in trace.JOBS: raise HTTPException(404, "no such job")
     return {"cancelled": trace.cancel(job)}
+@app.get("/api/bridge")
+async def bridge(q: str | None = None, tx: str | None = None, chain: str | None = None, anchor: str | None = None, heuristic: str = "auto"):
+    """Cross-chain match for a bridge transaction (either side) or an address's bridge activity.
+    Deterministic = linked by the bridge's own indexer (message/order id). Heuristic = amount/time/same-address lead only."""
+    q = (q or tx or "").strip()
+    c, kind = chains.detect(q)
+    if not c: raise HTTPException(400, "Give a transaction hash (ETH/BTC/SOL) or an address")
+    try:
+        if kind == "tx": d = await asyncio.wait_for(bridges.match_tx(q, None, "always" if heuristic == "always" else heuristic.lower() not in ("false", "0", "off", "no")), LOOKUP_TIMEOUT - 1)
+        else: d = await asyncio.wait_for(bridges.match_address(q, c), LOOKUP_TIMEOUT - 1)
+    except asyncio.TimeoutError: raise HTTPException(504, f"bridge indexers too slow right now (>{LOOKUP_TIMEOUT - 1:.0f}s); please retry")
+    except ValueError as e: raise HTTPException(400, str(e))
+    d = dict(d)
+    for m in d.get("matches", []) + d.get("heuristic", []):
+        nodes, edges = bridges.fragment(m, anchor, "dst" if m.get("side", "src") == "src" else "src")
+        for n in nodes: n["flag"] = n.get("kind") in labels.EXPO
+        m["graph"] = {"nodes": nodes, "edges": edges}
+    d["caveat"] = "Deterministic = linked by the bridge's own indexer. Heuristic = lead only (amount/time/address coincidence), not evidence."
+    return d
+@app.get("/api/bridges")
+def bridges_supported(): return {"supported": bridges.SUPPORTED}
 @app.get("/api/prices")
 async def prices(): return await chains.ensure_prices()
 @app.get("/healthz")
