@@ -56,7 +56,12 @@ async def ensure_prices():
         b, e, s = d["bitcoin"]["usd"], d["ethereum"]["usd"], d["solana"]["usd"]
         PRICE.update({"BTC": b, "WBTC": b, "ETH": e, "WETH": e, "STETH": e, "SOL": s, "WSOL": s})
     except Exception as ex:
-        print("price fetch failed:", ex); _price_ts[0] = time.time() - 540   # retry in ~1 min
+        try:   # fallback: Coinbase spot (CoinGecko often 429s shared cloud IPs such as Render)
+            r = await asyncio.wait_for(asyncio.gather(*[get(f"https://api.coinbase.com/v2/prices/{c}-USD/spot", ttl=600) for c in ("BTC", "ETH", "SOL")]), 5)
+            b, e, s = (float(x["data"]["amount"]) for x in r)
+            PRICE.update({"BTC": b, "WBTC": b, "ETH": e, "WETH": e, "STETH": e, "SOL": s, "WSOL": s})
+        except Exception as ex2:
+            print("price fetch failed:", ex, "| fallback:", ex2); _price_ts[0] = time.time() - 540   # retry in ~1 min
     return PRICE
 def usd_of(amount, unit, rate=None):
     p = rate or PRICE.get((unit or "").upper())
