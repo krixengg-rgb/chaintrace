@@ -154,6 +154,24 @@ async def bridge(q: str | None = None, tx: str | None = None, chain: str | None 
         m["graph"] = {"nodes": nodes, "edges": edges}
     d["caveat"] = "Deterministic = linked by the bridge's own indexer. Heuristic = lead only (amount/time/address coincidence), not evidence."
     return d
+_REPORT_SEM = asyncio.Semaphore(1)   # one PDF at a time (512 MB hosts)
+@app.post("/api/report")
+async def make_report(request: Request):
+    """case JSON (graph, notes, labels, trace summary, query log, PNG) -> PDF investigation report"""
+    if int(request.headers.get("content-length") or 0) > 20 * 1024 * 1024: raise HTTPException(413, "case payload too large (max 20 MB)")
+    try: p = await request.json()
+    except Exception: raise HTTPException(400, "body must be JSON")
+    if not isinstance(p, dict) or not isinstance(p.get("nodes"), list) or not isinstance(p.get("edges"), list): raise HTTPException(400, "expected {case, nodes[], edges[], ...}")
+    if len(p["nodes"]) > 3000 or len(p["edges"]) > 6000: raise HTTPException(413, "graph too large for a report (max 3000 nodes / 6000 edges)")
+    import report   # lazy: fpdf2/Pillow only loaded when a report is requested
+    async with _REPORT_SEM:
+        try: pdf, info = await asyncio.wait_for(report.build(p), LOOKUP_TIMEOUT + 20)
+        except asyncio.TimeoutError: raise HTTPException(504, "report generation timed out")
+    import re as _re
+    name = _re.sub(r"[^A-Za-z0-9._-]+", "_", ((p.get("meta") or {}).get("ref") or (p.get("case") or {}).get("name") or "case"))[:60]
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="ChainTrace-report-{name}.pdf"',
+        "X-Report-SHA256": info["pdf_sha256"], "X-Case-SHA256": info["case_sha256"], "X-Report-Pages": str(info["pages"]),
+        "Access-Control-Expose-Headers": "X-Report-SHA256, X-Case-SHA256, X-Report-Pages"})
 @app.get("/api/bridges")
 def bridges_supported(): return {"supported": bridges.SUPPORTED}
 @app.get("/api/prices")

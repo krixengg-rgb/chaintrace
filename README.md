@@ -13,6 +13,21 @@ The free tier disk is ephemeral: the HTTP cache and in-memory trace jobs reset o
 - **Entity grouping**: compound groups for the same verified entity, the same suggested-deposit exchange, or the same BTC common-input cluster. The root stays outside any group. Select a group and press **E**, or double-tap it, to collapse it into one node with aggregated Σ edges, or split it again.
 - **Noise filter** (on by default): hides dust below a configurable min $, spam/airdrop tokens (Blockscout reputation, URL-like names, or no price with ≥20k holders), zero-value calls and approvals. Unpriced tokens are optional. An "N hidden" counter shows how many flows are filtered. Trace/AutoTrace hop ranking skips noise and scores by USD × (1+0.3·ln count) × label weight.
 
+## PDF investigation report (v8)
+Click **📄 Report** in the header, choose **Export ▾ → PDF report…**, or use **PDF** on a case in the cases drawer. Enter a case reference, investigator, an optional handling marking and notes, then click **Generate PDF**. The browser sends the current graph or case as JSON to `POST /api/report` and gets back an A4 PDF built server-side with fpdf2 (no headless browser needed). The report contains:
+- **Cover:** case, reference, investigator, scope, report time in UK time (Europe/London) and UTC, ChainTrace version and commit, and SHA-256 hashes of the case data and graph image.
+- **1 Executive summary:** subject, flows, key endpoints and the highest-risk exposures.
+- **2 Graph image.**
+- **3 Chronological trail:** UK and UTC times, chain, full tx hash, from/to, asset, amount, USD and an explorer link per row.
+- **4 Bridge hops:** method and confidence.
+- **5 Entities:** label, category, source dataset, licence and confidence.
+- **6 Case notes.**
+- **7 Methodology and limitations.**
+- **Appendix A:** the query log, upstream API URLs with fetch times, explorer links and label datasets.
+- **Appendix B:** integrity details.
+
+AI-inferred deposit labels and heuristic bridge matches are marked "Intelligence lead – not evidence; corroborate (e.g. production order to the VASP)". The exact case JSON is embedded as `case_data.json` (extract it with `pdfdetach -saveall`, then check it with `sha256sum`). Response headers carry `X-Report-SHA256`, `X-Case-SHA256` and `X-Report-Pages`. USD for each row is the daily close on the transaction date where Coinbase has candles (D), par for stablecoins (P), or the trace-time price otherwise (T). The report is a ChainTrace output, not an official police or agency template. Test: `LP=... python3 uitest_report.py`.
+
 ## Cross-chain bridge tracing (v7)
 
 When a flow hits a bridge, ChainTrace looks up the matching transfer on the destination chain and draws it as a **dashed cyan cross-chain edge** (`⇄`). Each edge records the bridge, the method and a confidence score. Heuristic leads are drawn **dotted amber**.
