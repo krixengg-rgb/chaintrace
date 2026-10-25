@@ -1,14 +1,14 @@
 {
- "time": "2026-10-21 10:28",
+ "time": "2026-10-25 14:48",
  "eth_count": {
-  "new": 68137,
-  "published": 57234
+  "new": 68265,
+  "published": 68137
  },
  "eth_spotcheck": {
   "gate_violations": 0,
   "median_out_counterparties": 3,
   "mean_confidence": 0.949,
-  "top_exchange_share": 0.237,
+  "top_exchange_share": 0.236,
   "top_exchange": "Huobi",
   "single_sweep_share": 0.398
  },
