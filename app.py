@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-import asyncio, chains, labels, os, trace, autotrace, deposits, bridges
+import asyncio, chains, labels, os, trace, autotrace, deposits, bridges, watch
 app = FastAPI(title="ChainTrace")
 # ---- auth + rate limiting (public exposure) ----
 import secrets, base64, time as _t, collections
@@ -154,6 +154,25 @@ async def bridge(q: str | None = None, tx: str | None = None, chain: str | None 
         m["graph"] = {"nodes": nodes, "edges": edges}
     d["caveat"] = "Deterministic = linked by the bridge's own indexer. Heuristic = lead only (amount/time/address coincidence), not evidence."
     return d
+WATCH_MAX = 8                        # addresses per /api/watch/check call (client batches + staggers the rest)
+_WATCH_SEM = asyncio.Semaphore(2)    # concurrent watch batches across all clients
+@app.post("/api/watch/check")
+async def watch_check(request: Request):
+    """stateless watchlist check: {items:[{id, address, chain?, name, ref, rules, cursor?, since?}]} -> new events + updated cursors.
+    Nothing is stored server-side; the watchlist and cursors live with the caller (browser IndexedDB or watch_check.py)."""
+    try: p = await request.json()
+    except Exception: raise HTTPException(400, "body must be JSON")
+    items = p.get("items") if isinstance(p, dict) else None
+    if not isinstance(items, list) or not items: raise HTTPException(400, "expected {items:[...]}")
+    if len(items) > WATCH_MAX: raise HTTPException(413, f"max {WATCH_MAX} addresses per check; send the rest in later batches")
+    for it in items:
+        if not isinstance(it, dict) or not isinstance(it.get("address"), str) or len(it["address"]) > 100: raise HTTPException(400, "each item needs an address")
+        cur = it.get("cursor")
+        if cur is not None and (not isinstance(cur, dict) or len(cur.get("seen") or []) > 400): raise HTTPException(400, "bad cursor")
+    t0 = _t.time()
+    async with _WATCH_SEM:
+        res = await watch.check_many(items, budget=max(6.0, LOOKUP_TIMEOUT - 4 - (_t.time() - t0)))
+    return {"checked_at": int(_t.time()), "elapsed": round(_t.time() - t0, 1), "results": res, "rules_help": {"cats": watch.CATS, "default": watch.DEFAULT_RULES}}
 _REPORT_SEM = asyncio.Semaphore(1)   # one PDF at a time (512 MB hosts)
 @app.post("/api/report")
 async def make_report(request: Request):

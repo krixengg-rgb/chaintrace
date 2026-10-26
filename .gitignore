@@ -14,3 +14,6 @@ screenshot*.png
 chains_v1.py
 data/depwork/
 /labels.sqlite
+data/watchlist.json
+data/watch_state.json
+data/watch_events.jsonl

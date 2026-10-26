@@ -67,8 +67,13 @@ def usd_of(amount, unit, rate=None):
     p = rate or PRICE.get((unit or "").upper())
     try: return round(float(amount) * float(p), 2) if p and amount is not None else None
     except Exception: return None
+import contextvars
+FRESH = contextvars.ContextVar("fresh", default=None)   # watchlist checks: cap TTL of mutable data (first pages, balances)
+RAW = contextvars.ContextVar("raw", default=None)       # watchlist checks: receive the un-aggregated edges of a page
+def _ttl(ttl):
+    f = FRESH.get(); return min(ttl, f) if f and ttl < LONG else ttl
 async def get(url, ttl=TTL, **kw):
-    k = ("GET", url, str(kw))
+    ttl = _ttl(ttl); k = ("GET", url, str(kw))
     if k in _cache and time.time() - _cache[k][0] < ttl: STATS["hit"] += 1; return _cache[k][1]
     STATS["miss"] += 1
     async with _sem(url):
@@ -81,7 +86,7 @@ async def get(url, ttl=TTL, **kw):
     d = r.json(); _cache[k] = (time.time(), d); return d
 async def rpc(url, method, params, ttl=None):
     k = (url, method, str(params))
-    ttl = ttl or (LONG if method == "getTransaction" else TTL)
+    ttl = _ttl(ttl or (LONG if method == "getTransaction" else TTL))
     if k in _cache and time.time() - _cache[k][0] < ttl: STATS["hit"] += 1; return _cache[k][1]
     STATS["miss"] += 1
     async with _sem(url):
@@ -357,6 +362,7 @@ TX = {"btc": btc_tx, "eth": eth_tx, "sol": sol_tx}
 def _inrange(t, f, to):
     return t is None or ((f is None or t >= f) and (to is None or t <= to))
 def _finish_page(chain, focus, edges, hist, ntags=None, cap=60):
+    if RAW.get() is not None: RAW.get()["edges"] = [dict(e) for e in edges]
     raw = edges; agg = _agg_unit([dict(e) for e in edges], 10 ** 9); edges = agg[:cap]; ntags = ntags or {}
     try: CP_LAST[0] = counterparties(chain, focus, agg, raw)
     except Exception as ex: CP_LAST[0] = {"counterparties": [], "series": [], "error": str(ex)}
