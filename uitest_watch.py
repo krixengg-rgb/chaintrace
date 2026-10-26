@@ -24,6 +24,8 @@ def api():
     r = httpx.post(U + "/api/watch/check", json={"items": [{"address": "nope"}]}, auth=a, timeout=30)
     check("api: bad address -> error result", r.status_code == 200 and r.json()["results"][0]["status"] == "error", r.text[:120])
     r = httpx.post(U + "/api/watch/check", json={"items": [{"id": "s", "address": BSOL, "since": int(time.time()) - 3600}]}, auth=a, timeout=40); j = r.json()
+    if j["results"][0]["status"] == "error":  # cold start / upstream hiccup: retry once
+        time.sleep(5); j = httpx.post(U + "/api/watch/check", json={"items": [{"id": "s", "address": BSOL, "since": int(time.time()) - 3600}]}, auth=a, timeout=40).json()
     res = j["results"][0]; check("api: SOL hot wallet check ok + events", res["status"] == "ok" and len(res["events"]) > 0 and res["cursor"]["seen"], (res["status"], len(res["events"]), j["elapsed"]))
     r2 = httpx.post(U + "/api/watch/check", json={"items": [{"id": "s", "address": BSOL, "cursor": res["cursor"]}]}, auth=a, timeout=40).json()["results"][0]
     old = {e["tx"] for e in res["events"] if e.get("tx")}
