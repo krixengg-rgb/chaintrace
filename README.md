@@ -13,6 +13,14 @@ The free tier disk is ephemeral: the HTTP cache and in-memory trace jobs reset o
 - **Entity grouping**: compound groups for the same verified entity, the same suggested-deposit exchange, or the same BTC common-input cluster. The root stays outside any group. Select a group and press **E**, or double-tap it, to collapse it into one node with aggregated Σ edges, or split it again.
 - **Noise filter** (on by default): hides dust below a configurable min $, spam/airdrop tokens (Blockscout reputation, URL-like names, or no price with ≥20k holders), zero-value calls and approvals. Unpriced tokens are optional. An "N hidden" counter shows how many flows are filtered. Trace/AutoTrace hop ranking skips noise and scores by USD × (1+0.3·ln count) × label weight.
 
+## Public shared cases
+
+Open a read-only investigation case from a URL on phone or desktop:
+
+`https://chaintrace-d4fv.onrender.com/?case=<slug>`
+
+Cases live as JSON under `static/cases/<slug>.json` (public on-chain data + public reporting only — never private case notes). The first open copies the case into your browser storage so you can annotate a local copy. Example: the 29 Oct 2026 Binance hot-wallet drain → `?case=binance-2026-10-29`.
+
 ## Watchlist & alerts (v8)
 
 Watch any BTC / ETH / SOL address and get alerted on new activity.

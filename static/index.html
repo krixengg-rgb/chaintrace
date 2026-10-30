@@ -321,7 +321,9 @@ async function newCaseUI(){const n=prompt('New case name','Untitled case');if(n=
 function caseCard(){if(!curCase){$('casecard').innerHTML='';return}$('casecard').innerHTML=`<div class="card glass"><h3>📁 ${esc(curCase.name)}<span class="sp"></span><span class="dim" style="text-transform:none;letter-spacing:0">${Object.keys(curCase.notes.nodes).length+Object.keys(curCase.notes.edges).length} notes · ${Object.keys(curCase.labels).length} labels</span></h3>
  <textarea id="caseNote" placeholder="Case notes (summary, hypotheses, next steps)…">${esc(curCase.notes.case||'')}</textarea></div>`;
  $('caseNote').oninput=e=>{curCase.notes.case=e.target.value;autosave()}}
-async function openCase(id){const c=await Store.get(id);if(!c)return toast('Case not found');restoring=true;curCase=c;if(innerWidth<900)toggleCases(false);
+async function loadPublicCase(id){try{const r=await fetch('/static/cases/'+encodeURIComponent(id)+'.json',{cache:'no-store'});if(!r.ok)return null;const o=await r.json();const c=o.case||o;if(!c||!c.graph)return null;c.id=c.id||id;c.readonly=true;return c}catch(e){return null}}
+async function openCase(id){let c=await Store.get(id);if(!c){c=await loadPublicCase(id);if(c){try{await Store.put(c)}catch(e){}} }
+ if(!c)return toast('Case not found');restoring=true;curCase=c;if(innerWidth<900)toggleCases(false);
  cy.elements().remove();expanded.clear();$('det').innerHTML='';$('empty').style.display=c.graph.nodes.length?'none':'';
  cy.add(c.graph.nodes.map(n=>({group:'nodes',data:n.data,position:n.position})));cy.add(c.graph.edges.map(d=>({group:'edges',data:d})));
  c.graph.nodes.forEach(n=>chainOf[n.data.id]=n.data.info?.chain);cy.layout({name:'preset'}).run();cy.fit(undefined,40);
@@ -385,5 +387,8 @@ function exportEndpoints(){const j=lastTrace;if(!j||!j.endpoints)return;const ro
  if(p.get('topk'))$('topk').value=p.get('topk');if(p.get('from'))$('df').value=p.get('from');if(p.get('to'))$('dt').value=p.get('to');
  if(p.get('amax'))$('amax').value=p.get('amax');if(p.get('amin'))$('amin').value=p.get('amin');
  if(p.get('case')){openCase(p.get('case'));return}
+ if(p.get('addrs')){const list=p.get('addrs').split(',').map(s=>s.trim()).filter(Boolean);if(list.length){$('q').value=list[0];setBadge();
+  (async()=>{await go();for(const a of list.slice(1)){try{const d=await api(a);add(d,null)}catch(e){}}
+   if(p.get('mode')==='auto'||p.get('autotrace')==='1')autoTrace()})();return}}
  if(q){$('q').value=q;setBadge();p.get('mode')==='trace'?traceN():p.get('mode')==='auto'?autoTrace():go()}})();
 </script><script src="/static/v6.js"></script><script src="/static/bridge.js"></script><script src="/static/report.js"></script><script src="/static/watch.js"></script></body></html>
