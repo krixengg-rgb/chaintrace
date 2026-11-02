@@ -5,7 +5,7 @@
 <script src="/static/cytoscape.min.js"></script>
 <style>
 :root{--bg:#070a12;--panel:rgba(20,26,42,.62);--panel2:rgba(28,36,58,.55);--line:rgba(140,160,210,.14);--txt:#e6ebf5;--mut:#8a95ad;--acc:#7c5cff;--acc2:#22d3ee;
---btc:#f7931a;--eth:#8c9eff;--sol:#14f195;--red:#ff4d6d;--org:#ff9f43;--yel:#f6c945;--grn:#2ee59d;--blu:#4c8dff;
+--btc:#f7931a;--eth:#8c9eff;--sol:#14f195;--tron:#ff425a;--xrp:#00aae4;--red:#ff4d6d;--org:#ff9f43;--yel:#f6c945;--grn:#2ee59d;--blu:#4c8dff;
 --font:ui-sans-serif,-apple-system,"Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif;--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace}
 *{box-sizing:border-box}html,body{height:100%}
 body{margin:0;font:14px/1.45 var(--font);color:var(--txt);background:var(--bg);display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased}
@@ -23,6 +23,8 @@ header{display:flex;align-items:center;gap:14px;padding:12px 16px;flex-wrap:wrap
 .badge.btc{color:var(--btc);border-color:rgba(247,147,26,.5);background:rgba(247,147,26,.1)}
 .badge.eth{color:var(--eth);border-color:rgba(140,158,255,.5);background:rgba(140,158,255,.1)}
 .badge.sol{color:var(--sol);border-color:rgba(20,241,149,.45);background:rgba(20,241,149,.08)}
+.badge.tron{color:var(--tron);border-color:rgba(255,66,90,.5);background:rgba(255,66,90,.1)}
+.badge.xrp{color:var(--xrp);border-color:rgba(0,170,228,.5);background:rgba(0,170,228,.1)}
 .btn{border:1px solid var(--line);background:var(--panel2);padding:8px 13px;border-radius:11px;cursor:pointer;transition:.15s;white-space:nowrap}
 .btn:hover{border-color:rgba(124,92,255,.6);background:rgba(124,92,255,.15)}.btn:disabled{opacity:.45;cursor:default}
 .btn.pri{background:linear-gradient(135deg,var(--acc),#5b8cff);border:0;font-weight:600;box-shadow:0 4px 18px rgba(124,92,255,.4)}
@@ -105,7 +107,7 @@ textarea:focus,.lblrow input:focus{border-color:rgba(124,92,255,.6)}
  <div class="brand"><i>⛓</i>ChainTrace <small>BTC · ETH · SOL fund tracing</small></div>
  <div class="search glass">
   <span id="chainBadge" class="badge">AUTO</span>
-  <input id="q" autocomplete="off" spellcheck="false" placeholder="Paste a Bitcoin, Ethereum or Solana address / tx hash">
+  <input id="q" autocomplete="off" spellcheck="false" placeholder="Paste a BTC, ETH, SOL, TRON or XRP address / tx hash">
   <button class="btn pri" id="gobtn" onclick="go()">Trace</button>
  </div>
  <span id="caseChip">No case open</span><button class="btn" id="savebtn" onclick="saveToCase()">💾 Save case</button>
@@ -129,8 +131,9 @@ textarea:focus,.lblrow input:focus{border-color:rgba(124,92,255,.6)}
  <div id="gwrap" class="glass"><div class="prog"></div><div id="cy"></div>
   <div class="empty" id="empty"><div><h2>Follow the money.</h2>Paste an address or transaction above. Tap a node for details, double-tap to expand its hops.
    <div class="ex"><button class="btn sm" onclick="demo('0x28C6c06298d514Db089934071355E5743bf21d60')">Ξ Binance 14</button>
-   <button class="btn sm" onclick="demo('bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h')">₿ Binance cold</button>
-   <button class="btn sm" onclick="demo('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM')">◎ Binance SOL</button></div></div></div>
+   <button class="btn sm" onclick="demo('bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h')">₿ Binance BTC</button>
+   <button class="btn sm" onclick="demo('TDqSquXBgUCLYvYC4XZgrprLK589dkhSCf')">T Binance TRX</button>
+   <button class="btn sm" onclick="demo('rDAE53VfMvftPB4ogpWGWvzkQxfht6JPxr')">✕ Binance XRP</button></div></div></div>
   <div class="gtools"><button class="btn" title="Fit" onclick="cy.animate({fit:{padding:40}},{duration:350})">⤢</button>
    <button class="btn" title="Zoom in" onclick="zoomBy(1.3)">+</button><button class="btn" title="Zoom out" onclick="zoomBy(1/1.3)">−</button>
    <button class="btn" title="Re-layout" onclick="relayout()">⟳</button><button class="btn" title="Clear highlight" onclick="clearHl()">◌</button></div>
@@ -152,7 +155,9 @@ const CAT={sanctioned:['#ff4d6d','⊘','Sanctioned'],terrorism:['#ff2e63','☠',
 const HIGH=['sanctioned','terrorism','darknet','ransomware','hack','scam','mixer','blocklisted','gambling'];
 const CH={btc:{c:'#f7931a',n:'BTC',sym:'₿',tx:'https://mempool.space/tx/',ad:'https://mempool.space/address/'},
  eth:{c:'#8c9eff',n:'ETH',sym:'Ξ',tx:'https://etherscan.io/tx/',ad:'https://etherscan.io/address/'},
- sol:{c:'#14f195',n:'SOL',sym:'◎',tx:'https://solscan.io/tx/',ad:'https://solscan.io/account/'}};
+ sol:{c:'#14f195',n:'SOL',sym:'◎',tx:'https://solscan.io/tx/',ad:'https://solscan.io/account/'},
+ tron:{c:'#ff425a',n:'TRX',sym:'T',tx:'https://tronscan.org/#/transaction/',ad:'https://tronscan.org/#/address/'},
+ xrp:{c:'#00aae4',n:'XRP',sym:'✕',tx:'https://xrpscan.com/tx/',ad:'https://xrpscan.com/account/'}};
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const short=a=>!a?'':a.startsWith('tx:')?'tx '+a.slice(3,11)+'…':a.length>16?a.slice(0,6)+'…'+a.slice(-4):a;
@@ -160,6 +165,8 @@ const fmt=(n,d=6)=>n==null||isNaN(n)?'–':(+n).toLocaleString(undefined,{maximu
 const usd=n=>n==null?'':'$'+(+n).toLocaleString(undefined,{maximumFractionDigits:Math.abs(n)>=100?0:2});
 const tfmt=t=>{if(!t)return'pending';const d=typeof t==='number'?new Date(t*1000):new Date(t);return isNaN(d)?'':d.toISOString().slice(0,16).replace('T',' ')};
 function detect(q){q=q.trim();if(/^0x[0-9a-fA-F]{40}$/.test(q))return['eth','address'];if(/^0x[0-9a-fA-F]{64}$/.test(q))return['eth','tx'];
+ if(/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(q)||/^41[0-9a-fA-F]{40}$/.test(q))return['tron','address'];
+ if(/^r[rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz]{24,34}$/.test(q))return['xrp','address'];
  if(/^[0-9a-fA-F]{64}$/.test(q))return['btc','tx'];if(/^(bc1[02-9ac-hj-np-z]{11,71}|[13][1-9A-HJ-NP-Za-km-z]{25,34})$/.test(q))return['btc','address'];
  if(/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(q))return['sol','tx'];if(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(q))return['sol','address'];return[null,null]}
 function setBadge(){const[c,k]=detect($('q').value);const b=$('chainBadge');b.className='badge '+(c||'');b.textContent=c?CH[c].sym+' '+CH[c].n+(k==='tx'?' TX':''):'AUTO'}
@@ -263,7 +270,7 @@ function render(d){const r=d.risk||{};const id=d.address||d.tx;let h=`<div class
  else h+=`<div class="kv"><div>Fee</div><div>${fmt(d.fee)} ${d.unit}</div><div>Time</div><div>${tfmt(d.time)} UTC</div>${d.status?`<div>Status</div><div>${esc(d.status)}</div>`:''}</div>`;
  if(d.cluster&&d.cluster.length>1)h+=`<details style="margin-top:10px"><summary class="dim">Common-input cluster · ${d.cluster.length} addresses</summary><div class="mono" style="margin-top:6px">${d.cluster.slice(0,40).map(esc).join('<br>')}</div></details>`;
  h+='</div>';
- if(d.txs){h+=`<div class="card glass"><h3>Activity<span class="sp"></span><span class="dim" style="text-transform:none;letter-spacing:0">${d.txs.length} loaded</span></h3><table>`+d.txs.map(t=>`<tr><td><a class="mono" target="_blank" rel="noopener" href="${CH[d.chain].tx+esc(t.tx)}">${short(t.tx||'')}</a><button class="copy" onclick="copy('${esc(t.tx)}')">⧉</button><div class="dim" style="font-size:11px">${tfmt(t.time)}${t.method?' · '+esc(t.method):''}</div></td><td class="r ${t.delta>=0?'pos':'neg'}">${t.delta>=0?'+':''}${fmt(t.delta,4)} ${esc(t.unit)}<div class="dim" style="font-size:11px">${usd(t.usd)}</div></td></tr>`).join('')+'</table>'
+ if(d.txs){h+=`<div class="card glass"><h3>Activity<span class="sp"></span><span class="dim" style="text-transform:none;letter-spacing:0">${d.txs.length} loaded</span></h3><table>`+d.txs.map(t=>`<tr><td><a class="mono" target="_blank" rel="noopener" href="${CH[d.chain].tx+esc(t.tx)}">${short(t.tx||'')}</a><button class="copy" onclick="copy('${esc(t.tx)}')">⧉</button><div class="dim" style="font-size:11px">${tfmt(t.time)}${t.method?' · '+esc(t.method):''}${t.destination_tag!=null?' · tag '+esc(t.destination_tag):''}</div></td><td class="r ${t.delta>=0?'pos':'neg'}">${t.delta>=0?'+':''}${fmt(t.delta,4)} ${esc(t.unit)}<div class="dim" style="font-size:11px">${usd(t.usd)}</div></td></tr>`).join('')+'</table>'
   +(d.next?'<div class="row"><button class="btn" id="more" onclick="loadMore()">Load more</button></div>':'<div class="dim" style="font-size:12px;margin-top:8px">End of history (or date range)</div>')+'</div>'}
  $('side').innerHTML=h}
 function renderTrace(j){const r=j.risk||{};let h=`<div class="card glass"><h3>${chainTag(j.chain)} Multi-hop trace<span class="sp"></span><span class="dim" style="text-transform:none;letter-spacing:0">${j.direction} · ${j.hops} hops · ${j.elapsed??'–'}s</span></h3>${addrLine(j.q,j.chain,!(j.root||'').indexOf('tx:'))}
@@ -279,8 +286,10 @@ cy.on('tap','node',e=>{const n=e.target.data('info')||{};const isTx=n.id&&n.id.s
  if(innerWidth<900)$('det').scrollIntoView({behavior:'smooth'})});
 cy.on('dbltap','node',e=>expand(e.target.id()));
 cy.on('tap','edge',e=>{const x=e.target.data('info');const c=chainOf[x.source]||chainOf[x.target];
+ const extra=(x.destination_tag!=null?`<div>Dest tag</div><div class="mono">${esc(x.destination_tag)} <span class="dim" style="font-size:11px">(VASP customer ref)</span></div>`:'')
+  +(x.issuer?`<div>Issuer</div><div class="mono">${esc(x.issuer)}</div>`:'');
  $('det').innerHTML=`<div class="card glass"><h3>Flow</h3><div class="big">${fmt(x.amount)} ${esc(x.unit||'')} <span class="usd">${usd(x.usd)}</span></div><div class="dim">${x.count||1} transfer(s)</div>
- <div class="kv"><div>From</div><div class="mono">${esc(x.source)}</div><div>To</div><div class="mono">${esc(x.target)}</div><div>Tx</div><div>${x.tx?`<a class="mono" target="_blank" rel="noopener" href="${CH[c]?.tx||'#'}${esc(x.tx)}">${short(x.tx)}</a>`:''}</div></div></div>`});
+ <div class="kv"><div>From</div><div class="mono">${esc(x.source)}</div><div>To</div><div class="mono">${esc(x.target)}</div>${extra}<div>Tx</div><div>${x.tx?`<a class="mono" target="_blank" rel="noopener" href="${CH[c]?.tx||'#'}${esc(x.tx)}">${short(x.tx)}</a>`:''}</div></div></div>`});
 cy.on('tap',e=>{if(e.target===cy)cy.elements().removeClass('faded')});
 // ---------- export ----------
 function dl(name,blob){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);exportMenu.classList.remove('open')}

@@ -3,7 +3,7 @@ D = os.path.join(os.path.dirname(__file__), "data")
 def _load(f):
     try: return {l.strip() for l in open(os.path.join(D, f)) if l.strip()}
     except FileNotFoundError: return set()
-OFAC = {"btc": _load("ofac_XBT.txt"), "eth": {a.lower() for a in _load("ofac_ETH.txt")}, "sol": _load("ofac_SOL.txt")}
+OFAC = {"btc": _load("ofac_XBT.txt"), "eth": {a.lower() for a in _load("ofac_ETH.txt")}, "sol": _load("ofac_SOL.txt"), "tron": set(), "xrp": set()}
 MIXERS_ETH = {  # Tornado Cash contracts (public)
  "0x12d66f87a04a9e220743712ce6d9bb1b5616b8fc":"Tornado Cash 0.1 ETH","0x47ce0c6ed5b0ce3d3a51fdb1c52dc66a7c3c2936":"Tornado Cash 1 ETH",
  "0x910cbd523d972eb0a6f4cae4618ad62622b39dbf":"Tornado Cash 10 ETH","0xa160cdab225685da1d56aa342ad8841c3b53f291":"Tornado Cash 100 ETH",
@@ -22,7 +22,41 @@ EXCH = {"eth": {
  "3LYJfcfHPXYJreMsASk2jkn69LWEYKzexb":"Binance"},
  "sol": {"5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9":"Binance 2","9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM":"Binance 1",
  "H8sMJSCQxfKiFTCfDR3DUMLPwcRbM61LGFJ8N4dK3WjS":"Coinbase 1","2AQdpHJ2JpcEgPiATUXjQxA8QmafFegfQwSLWSprPicm":"Coinbase 2",
- "FWznbcNXWQuHTawe9RxvQ2LdCENssh12dsznf4RiouN5":"Kraken"}}
+ "FWznbcNXWQuHTawe9RxvQ2LdCENssh12dsznf4RiouN5":"Kraken"},
+ "tron": {  # OKLink tag: Binance. DepositAndWithdraw_11
+  "TDqSquXBgUCLYvYC4XZgrprLK589dkhSCf":"Binance DepositAndWithdraw_11"},
+ "xrp": {  # XRPScan well-known accounts (binance.com)
+  "rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh":"Binance 1","rJb5KsHsDHF1YS5B5DU6QCkH5NsPaKQTcy":"Binance 2",
+  "rH71Wv8YCeHCbMfWDrFGCDuUBhxQB2HLN1":"Binance 3","rEy8TFcrAPvhpKrwyrscNYyqBGUkE9hKaJ":"Binance 4",
+  "rs8ZPbYqgecRcDzQpJYAMhSxSi5htsjnza":"Binance 5","rDAE53VfMvftPB4ogpWGWvzkQxfht6JPxr":"Binance 6",
+  "rhQADfs6UxfP7iUPwsU7b3uwDVQLLgFcu8":"Binance 7","rHxPQVkTvqbdq1pXbgVGH2PTQdBKkYqKD":"Binance 8",
+  "rBtttd61FExHC68vsZ8dqmS3DfjFEceA1A":"Binance 9","rNU4eAowPuixS5ZCWaRL72UUeKgxcKExpK":"Binance 10",
+  "rNxp4h8apvRis6mJf9Sh8C6iRxfrDWN7AV":"Binance 11","rfQ9EcLkU6WnNmkS3EwUkFeXeN47Rk8Cvi":"Binance 18",
+  "rarG6FaeYhnzSKSS5EEPofo4gFsPn2bZKk":"Binance 15","rhWj9gaovwu2hZxYW7p388P8GRbuXFLQkK":"Binance 14",
+  "rLNaPoKeeBjZe2qs6x52yVPZpZ8td4dc6w":"Coinbase 1","rLHzPsX6oXkzU2qL12kHCH8G8cnZv1rBJh":"Kraken 1",
+  "rDsbeomae4FXwgQTJp9Rs64Qg9vDiTCdBv":"Bitstamp 1","rUW9toSjQkLY6EspdnBJP2paG4hWKmNbMh":"KuCoin 1",
+  "rUzWJkXyEtT8ekSSxkBYPqCvHpngcy6Fks":"OKX","rLW9gnQo7BQhU6igk5keqYnH3TVrCxGRzm":"Bitfinex 1"}}
+
+# Curated case labels (public reporting only — leads for investigation, not court evidence)
+HACK = {
+ "tron": {
+  "TG5iBMQPrDzJJAUM8GMVBf1hRaJ1wvzsGi": "Binance hack 2026 first hop",
+  "TPBkSjkCMn2ckrMuAP8n2J1jdjbw76bKN4": "Binance hack 2026 swap hop",
+  "TCzBTkqn66yApqbYoPezaEQosM5DAd7Y62": "Binance hack 2026 USDT hop",
+  "TSpe5HC3PRD2svJcr1YoGszhHk2mtkyZ8A": "Binance hack 2026 TRX holder",
+  "TRBdWqHnDVSZCVGfgHdKFLQPirQcA2PRki": "Binance hack 2026 TRX disperser",
+ },
+ "xrp": {
+  "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx": "Binance hack 2026 XRP holder",
+  "rhXtRtpfZRAKVayWd5Z5kRJ2YXYkcuxNRD": "Binance hack 2026 XRP peel",
+  "rsNoNkb1zqMBR1rjbrasUzExqjCDXseisW": "Binance hack 2026 XRP peel",
+  "rhfA8QzpcDPYX3safySLrvT5afnNjHc9XB": "Binance hack 2026 XRP peel",
+  "rKxwzjpZj5r9eXnCJQvLVUnebpGEHTDH1F": "Binance hack 2026 XRP peel",
+  "ryB7NESZcttqzRioiD5L6Kf5tFL87ktmx": "Binance hack 2026 XRP peel",
+  "raoMrxbMFo5xpVfE9VPoEuVpv1CTtebm5t": "Binance hack 2026 XRP peel",
+ },
+ "eth": {}, "btc": {}, "sol": {},
+}
 def norm(chain, a): return a.lower() if chain == "eth" else a
 import sqlite3, threading
 LDB = os.path.join(D, "labels.sqlite")
@@ -65,12 +99,14 @@ def _label_v1(chain, a, extra_tags=None):
     if chain == "eth" and k in MIXERS_ETH: name = MIXERS_ETH[k]; tags.append("mixer"); kind = kind or "mixer"
     ex = EXCH.get(chain, {}).get(k)
     if ex: name = name or ex; tags.append("exchange"); kind = kind or "exchange"
+    hk = HACK.get(chain, {}).get(k)
+    if hk: name = name or hk; tags.append("hack"); kind = kind or "hack"
     for t in (extra_tags or []):
         tl = t.lower()
         if "tornado" in tl or "mixer" in tl: kind = kind or "mixer"; tags.append("mixer")
         if tl in ("exchange", "hot wallet") or "binance" in tl or "coinbase" in tl: kind = kind or "exchange"
         if not name and t not in ("exchange","HOT WALLET","Exchange","Token Contract"): name = t
-    base = {"sanctioned":100,"mixer":75,"exchange":10}.get(kind, 0)
+    base = {"sanctioned":100,"mixer":75,"hack":80,"exchange":10}.get(kind, 0)
     return {"name": name, "kind": kind, "tags": sorted(set(tags + (extra_tags or []))), "risk": base}
 def score(own, neighbors):
     """own risk + exposure from direct counterparties."""

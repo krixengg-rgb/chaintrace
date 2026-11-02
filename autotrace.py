@@ -4,10 +4,10 @@ import asyncio, time, uuid, chains, trace, deposits, bridges
 from labels import EXPO, RISK
 ENDPOINT = set(RISK) - {"other", "miner"}
 ENDPOINT_AT = 0.85
-SEM = {"sol": 1, "btc": 3, "eth": 3}
+SEM = {"sol": 1, "btc": 3, "eth": 3, "tron": 2, "xrp": 2}
 def _sh(x): return x if x.startswith("tx:") else x[:8] + "…"
 MAX_BRIDGE_HOPS = 8
-NATIVE_UNIT = {"btc": "BTC", "eth": "ETH", "sol": "SOL"}
+NATIVE_UNIT = {"btc": "BTC", "eth": "ETH", "sol": "SOL", "tron": "TRX", "xrp": "XRP"}
 async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges=False):
     J = trace.JOBS[job]; c, kind = chains.detect(q); J.update(chain=c, status="running"); t0 = time.time()
     nodes, edges, parent, depth_of = {}, {}, {}, {}

@@ -44,8 +44,8 @@ async def check_one(item, cap=16.0):
     """item: {id, address, chain?, name, ref, rules, cursor?, since?} -> {id, status, cursor, events, summary, warnings}"""
     a = (item.get("address") or "").strip(); wid = item.get("id") or a
     c, kind = chains.detect(a)
-    c = item.get("chain") if item.get("chain") in ("btc", "eth", "sol") and c else c
-    if not c or kind != "address": return {"id": wid, "status": "error", "error": "not a BTC/ETH/SOL address", "events": []}
+    c = item.get("chain") if item.get("chain") in ("btc", "eth", "sol", "tron", "xrp") and c else c
+    if not c or kind != "address": return {"id": wid, "status": "error", "error": "not a BTC/ETH/SOL/TRON/XRP address", "events": []}
     rules = norm_rules(item.get("rules")); cur = dict(item.get("cursor") or {}); base = not cur.get("checked")
     if base and item.get("since"): cur = {"t": int(item["since"]), "seen": []}; base = False
     raw = {}; tf = chains.FRESH.set(FRESH_TTL); tr = chains.RAW.set(raw)

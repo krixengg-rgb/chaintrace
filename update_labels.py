@@ -39,6 +39,8 @@ SOURCES = {  # id -> (description, url, licence, default confidence, clear_licen
  "jasontth": ("Jasontth/crypto_label via ImMike (BTC/ETH)", "https://github.com/Jasontth/crypto_label", "UNCLEAR (no licence upstream)", 0.6, False),
  "allowlist": ("ChainTrace allowlist of major tokens / protocol infra (overrides risk labels)", "update_labels.py", "own work", 0.99, True),
  "builtin": ("ChainTrace hand-curated seed list", "local labels.py", "own work", 0.8, True),
+ "xrpscan": ("XRPScan well-known accounts (via labels.py seed)", "https://api.xrpscan.com/api/v1/names/well-known", "public API labels", 0.85, True),
+ "oklink-tron": ("OKLink / public TRON explorer tags (via labels.py seed)", "https://www.oklink.com", "public explorer tags", 0.75, True),
 }
 EXCH = r"binance|coinbase|kraken|huobi|htx|okx|okex|bitfinex|bittrex|poloniex|kucoin|gate[-. ]?io|bybit|crypto[-. ]?com|gemini|bitstamp|ftx|upbit|bithumb|mexc|bitget|hotbit|robinhood|bitflyer|bitmex|deribit|exchange|cex|hitbtc|\bliquid\b|zb\.com|bitso|coinone|korbit|luno|paxful|localbitcoins|cryptopia|yobit|exmo|wazirx|coincheck|bitpanda"
 CAT_RULES = [  # (regex on lowercased label/category text, category)
@@ -78,6 +80,7 @@ ALLOW = {"eth": {
  "0x5c7bcd6e7de5423a257d81b442095a1a6ced35c5": "Across: Spoke Pool", "0x99c9fc46f92e8a1c0dec1b1747d010903e884be1": "Optimism: Gateway",
  "0x8315177ab297ba92a06054ce80a67ed4dbd7ed3a": "Arbitrum: Bridge", "0x4dbd4fc535ac27206064b68ffcf827b0a60bab3f": "Arbitrum: Delayed Inbox",
  "0x00000000219ab540356cbb839cbe05303d7705fa": "Beacon Deposit Contract"},
+ "tron": {"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t": "Tether: USDT-TRC20 token contract"},
  "sol": {"11111111111111111111111111111111": "System Program", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA": "SPL Token Program",
          "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": "USDC mint", "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": "USDT mint",
          "So11111111111111111111111111111111111111112": "Wrapped SOL mint", "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4": "Jupiter v6 aggregator"}}
@@ -123,7 +126,7 @@ def download():
 def build(include_unclear=False):
     rows = []
     def add(chain, addr, category, name, source, url=None, conf=None, entity=None):
-        if not addr or chain not in ("btc", "eth", "sol"): return
+        if not addr or chain not in ("btc", "eth", "sol", "tron", "xrp"): return
         addr = addr.strip().strip("'\"")
         if chain == "eth":
             if not re.fullmatch(r"0x[0-9a-fA-F]{40}", addr): return
@@ -140,6 +143,8 @@ def build(include_unclear=False):
     for c, d in L.EXCH.items():
         for a, n in d.items(): add(c, a, "exchange", n, "builtin", entity=n.split()[0])
     for a, n in L.MIXERS_ETH.items(): add("eth", a, "mixer", n, "builtin", entity="Tornado Cash")
+    for c, d in getattr(L, "HACK", {}).items():
+        for a, n in d.items(): add(c, a, "hack", n, "builtin", entity="Binance hack 2026", conf=0.9)
     # GraphSense
     for f in sorted(glob.glob(os.path.join(SRC, "gs", "*.yaml"))):
         try: p = yaml.load(open(f), Loader=YL)

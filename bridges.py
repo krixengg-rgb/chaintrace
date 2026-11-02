@@ -61,7 +61,7 @@ CH = {
  "aptos": ("Aptos", "https://explorer.aptoslabs.com/txn/", "https://explorer.aptoslabs.com/account/", False),
  "near": ("NEAR", "https://nearblocks.io/txns/", "https://nearblocks.io/address/", False),
 }
-NATIVE = {"eth", "btc", "sol"}   # chains ChainTrace can expand further
+NATIVE = {"eth", "btc", "sol", "tron", "xrp"}   # chains ChainTrace can expand further
 WH = {1: "sol", 2: "eth", 4: "bsc", 5: "polygon", 6: "avax", 10: "fantom", 14: "celo", 15: "near", 16: "moonbeam", 21: "sui", 22: "aptos",
       23: "arb", 24: "op", 30: "base", 34: "scroll", 35: "mantle", 36: "blast", 38: "linea", 39: "berachain", 40: "sei", 44: "unichain",
       45: "worldchain", 46: "ink", 47: "hyperevm", 52: "sonic"}

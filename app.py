@@ -62,7 +62,7 @@ def finish(d):
             try: deposits.decorate(by[focus], deposits.suggest(c, focus, d), endpoint_at=9)
             except Exception as ex: print("suggest failed", ex)
         if focus and focus in by and by[focus].get("suggested"): d["suggestion"] = by[focus]["suggested"]
-    if c in ("btc", "eth", "sol"):
+    if c in ("btc", "eth", "sol", "tron", "xrp"):
         for n in d["nodes"]:
             if not n.get("kind") and not str(n["id"]).startswith("tx:"): bridges.decorate_vault(n, c)   # live THORChain/Maya vaults = bridge
     for n in d["nodes"]: n["flag"] = n.get("kind") in labels.EXPO
@@ -74,7 +74,11 @@ def finish(d):
 async def lookup(q: str, chain: str | None = None, cursor: str | None = None, date_from: int | None = None, date_to: int | None = None):
     if _t.time() - bridges._vts[0] > 3600: asyncio.create_task(bridges.refresh_vaults())
     c, kind = chains.detect(q)
-    if chain and c and chain != c and kind == "address": c = chain
+    if chain and chain in chains.ADDR:
+        if kind == "tx" or (not c):
+            c = chain; kind = kind or "address"
+        elif kind == "address" and chain != c:
+            c = chain
     if not c: raise HTTPException(400, "Unrecognised address / tx hash")
     try:
         if kind == "address":

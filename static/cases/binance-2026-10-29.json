@@ -1,16 +1,16 @@
 {
  "format": "chaintrace-case",
  "version": 1,
- "exported": "2026-10-30T12:46:42Z",
+ "exported": "2026-11-02T18:10:21Z",
  "case": {
   "id": "binance-2026-10-29",
   "name": "Binance hot-wallet drain \u00b7 29 Oct 2026 (~$6.3B)",
   "created": 1761820000000,
-  "updated": 1793364402853,
+  "updated": 1793643021270,
   "readonly": true,
   "public": true,
   "notes": {
-   "case": "BINANCE HOT-WALLET DRAIN \u2014 29 Oct 2026 (~$6.3B, largest crypto theft)\n\nWHAT IT IS: Real, confirmed by Binance. Compromised DevOps laptop \u2192 withdrawal service container submitted unauthorized withdrawals across ~9\u201311 chains. Binance: \"no evidence of any wallet private key leak.\" Elliptic & Chainalysis attribute to DPRK / TraderTraitor (Lazarus-linked). NOT a BNB Chain DeFi bug and not a phishing scam using the Binance name \u2014 it is Binance's own hot wallets.\n\nETH technique: EIP-7702 delegation. Attacker got Binance 14 to sign 50 authorizations (nonce window) pointing at sweeper 0x63e8\u20266fAe, then one sweep() moved 167,464 ETH + 63 tokens (~$2.5B) to hub 0x5227\u20262f8c. Binance 16 signed ordinary transfers of 28,005 ETH. Same operator drained Hot Wallet 34 of 823M USDC via B14's operator rights.\n\nOTHER CHAINS (ChainTrace supports BTC/ETH/SOL only): BTC 18,270.2 \u2192 peel into 19 wallets; SOL ~970.5k unmoved; also XRP, Tron, Arb, OP, AVAX, Polygon (not in this graph).\n\nWHERE FUNDS WENT (ETH):\n\u2022 ~$2B+ stables frozen on hub / hops (Tether, Circle)\n\u2022 ~197,460 ETH parked at 0x8532\u202643D4 (live-checked)\n\u2022 ~138k ETH at 0xc887\u2026286A from USDT swaps\n\u2022 ~78k ETH at 0x897c\u20268DF3 via Aave borrow + Uniswap\n\u2022 Some Tron TRX bridged; THORChain mix lead at 0x15104a9c\u2026 (commingled with older Bitget-linked BTC \u2014 attribution lead)\n\nSOURCES (verify yourself):\n\u2022 Binance Security Incident Update 2026-10-30: https://www.binance.com/en/support/announcement/detail/c5a8729a97ac486d963784d96c5642d7\n\u2022 Elliptic: https://www.elliptic.co/insights/binance-largest-hack-in-history/\n\u2022 Chainalysis: https://www.chainalysis.com/blog/binance-exploit-latest-findings-and-response/\n\u2022 808bits (EIP-7702 technical): https://808bits.com/articles/binance-hot-wallet-eip-7702-delegations/\n\u2022 drk.vc flow: https://drk.vc/news/binance-14-eip-7702-drain\n\u2022 HaskDetect Case 001: https://hasky00.github.io/haskDetect/\n\u2022 Tibane Labs multi-chain: https://www.tibane.net/research/binance-hack\n\u2022 CoinDesk BTC peel: https://www.coindesk.com/markets/2026/10/30/binance-hacker-splits-usd1-4-billion-of-bitcoin-into-19-wallets-that-no-one-can-freeze\n\u2022 Etherscan attacker: https://etherscan.io/address/0x7C8601d4645b93cea45F71e118A729332e6B5CA0\n\u2022 Etherscan hub: https://etherscan.io/address/0x5227f603C1eE34CE3C06eFe6477003BDfCCB2f8c\n\nCAVEATS: Balances are a live snapshot and change as the attacker moves funds. Tron/XRP/Arb/etc. not graphed here. Inferred deposit labels elsewhere are leads. Case is public on-chain data from public reporting \u2014 not private casework.\n",
+   "case": "BINANCE HOT-WALLET DRAIN \u2014 29 Oct 2026 (~$6.3B, largest crypto theft)\n\nWHAT IT IS: Real, confirmed by Binance. Compromised DevOps laptop \u2192 withdrawal service container submitted unauthorized withdrawals across ~9\u201311 chains. Binance: \"no evidence of any wallet private key leak.\" Elliptic & Chainalysis attribute to DPRK / TraderTraitor (Lazarus-linked). NOT a BNB Chain DeFi bug and not a phishing scam using the Binance name \u2014 it is Binance's own hot wallets.\n\nETH technique: EIP-7702 delegation. Attacker got Binance 14 to sign 50 authorizations (nonce window) pointing at sweeper 0x63e8\u20266fAe, then one sweep() moved 167,464 ETH + 63 tokens (~$2.5B) to hub 0x5227\u20262f8c. Binance 16 signed ordinary transfers of 28,005 ETH. Same operator drained Hot Wallet 34 of 823M USDC via B14's operator rights.\n\nOTHER CHAINS: BTC 18,270.2 \u2192 peel into 19 wallets; SOL ~970.5k; TRON 612.7M USDT + 46.39M TRX (graphed); XRP 233.46M from 5 hot wallets to rK21\u2026 then peeled 2 Nov into 6 wallets (graphed); also Arb, OP, AVAX, Polygon (not in this graph).\n\nWHERE FUNDS WENT (ETH):\n\u2022 ~$2B+ stables frozen on hub / hops (Tether, Circle)\n\u2022 ~197,460 ETH parked at 0x8532\u202643D4 (live-checked)\n\u2022 ~138k ETH at 0xc887\u2026286A from USDT swaps\n\u2022 ~78k ETH at 0x897c\u20268DF3 via Aave borrow + Uniswap\n\u2022 Some Tron TRX bridged; THORChain mix lead at 0x15104a9c\u2026 (commingled with older Bitget-linked BTC \u2014 attribution lead)\n\n\nTRON (graphed \u2014 Tibane Labs / TronGrid verified):\n\u2022 Victim hot TDqSquX\u2026hSCf \u2192 TG5iBMQP\u2026zsGi (612.73M USDT + 46.39M TRX)\n\u2022 300M USDT forwarded to TPBkSjkC\u2026bKN4 before freeze; 65.99M USDT to TCzBTkqn\u2026d7Y62; ~638M TRX via swap to TSpe5HC3\u2026kyZ8A; TRX disperser TRBdWqHn\u2026PRki\n\nXRP (graphed \u2014 XRPL / Tibane / Whale Alert verified):\n\u2022 5 victim hots \u2192 rK21t6nG\u2026gfzMx (233,461,943 XRP, 20:05\u201320:09 UTC 29 Oct)\n\u2022 2 Nov 03:52\u201304:00 UTC: stash peeled into 6 wallets (~40M \u00d75 + ~33.46M)\n\nSOURCES (verify yourself):\n\u2022 Binance Security Incident Update 2026-10-30: https://www.binance.com/en/support/announcement/detail/c5a8729a97ac486d963784d96c5642d7\n\u2022 Elliptic: https://www.elliptic.co/insights/binance-largest-hack-in-history/\n\u2022 Chainalysis: https://www.chainalysis.com/blog/binance-exploit-latest-findings-and-response/\n\u2022 808bits (EIP-7702 technical): https://808bits.com/articles/binance-hot-wallet-eip-7702-delegations/\n\u2022 drk.vc flow: https://drk.vc/news/binance-14-eip-7702-drain\n\u2022 HaskDetect Case 001: https://hasky00.github.io/haskDetect/\n\u2022 Tibane Labs multi-chain: https://www.tibane.net/research/binance-hack\n\u2022 CoinDesk BTC peel: https://www.coindesk.com/markets/2026/10/30/binance-hacker-splits-usd1-4-billion-of-bitcoin-into-19-wallets-that-no-one-can-freeze\n\u2022 Etherscan attacker: https://etherscan.io/address/0x7C8601d4645b93cea45F71e118A729332e6B5CA0\n\u2022 Etherscan hub: https://etherscan.io/address/0x5227f603C1eE34CE3C06eFe6477003BDfCCB2f8c\n\nCAVEATS: Balances are a live snapshot and change as the attacker moves funds. Arb/OP/AVAX/Polygon still not graphed. Inferred deposit labels elsewhere are leads. Case is public on-chain data from public reporting \u2014 not private casework.\n",
    "nodes": {
     "0x28C6c06298d514Db089934071355E5743bf21d60": "Victim hot wallet; EIP-7702 delegated then swept. Sources: Binance announcement, Etherscan, drk.vc, 808bits, Tibane Labs.\nLive: 0.8033193330768161 ETH (1792.09 USD)",
     "0xDFd5293D8e347dFe59E90eFd55b2956a1343963d": "Victim; signed plain transfers of 28,005 ETH to hub. Sources: HaskDetect, Tibane Labs, Etherscan.\nLive: 0.23002947711266936 ETH (513.16 USD)",
@@ -27,7 +27,25 @@
     "0x15104a9ce0f08a8f0075a0869ae80e795fe0feb7": "THORChain swaps from Tron Binance-theft pool + older BTC pool. Lead only (ZachXBT/TRM via Tibane).\nLive: 0.00240571817984548 ETH (5.37 USD)",
     "bc1q0mtc2f5agpkvlq6hhahmfr3hlr55kyfjhl2mnm": "Received 18,270.2 BTC; split into 19 wallets same block.\nLive: 0.0 BTC (0.0 USD)",
     "bc1qnq6jj9jmlf3945m3l8s0kxnqehrsga300k8t3s": "One of 19 peel destinations holding exactly 1000 BTC.\nLive: 1000.00003737 BTC (77382002.89 USD)",
-    "AffzFDKZbyMiU11zmVBoAqD25ugpr7xoWWyRyGigBEaU": "~970,554 SOL unmoved.\nLive: 970554.105662113 SOL (93706998.9 USD)"
+    "AffzFDKZbyMiU11zmVBoAqD25ugpr7xoWWyRyGigBEaU": "~970,554 SOL unmoved.\nLive: 970554.105662113 SOL (93706998.9 USD)",
+    "TDqSquXBgUCLYvYC4XZgrprLK589dkhSCf": "Victim TRON hot; sent 612.73M USDT + 46.39M TRX. Sources: Tibane Labs, TronGrid, LunarCrush reconstruction.",
+    "TG5iBMQPrDzJJAUM8GMVBf1hRaJ1wvzsGi": "First receive of TRON loot; 312.73M USDT frozen in place; forwarded 300M USDT + TRX. Sources: Tibane, TronGrid.",
+    "TPBkSjkCMn2ckrMuAP8n2J1jdjbw76bKN4": "Received 300M USDT; routed into SunSwap / JustLend paths. Sources: Tibane, LunarCrush, TronGrid.",
+    "TCzBTkqn66yApqbYoPezaEQosM5DAd7Y62": "Received 65.99M USDT from TPBk\u2026; reported frozen. Sources: LunarCrush, TronGrid.",
+    "TSpe5HC3PRD2svJcr1YoGszhHk2mtkyZ8A": "Received ~638M TRX from USDT\u2192TRX swap path. Sources: TronGrid (verified), Tibane flow.",
+    "TRBdWqHnDVSZCVGfgHdKFLQPirQcA2PRki": "TRX disperser; received stolen TRX and peels onward. Sources: Onyx report, Tibane, TronGrid.",
+    "rDAE53VfMvftPB4ogpWGWvzkQxfht6JPxr": "Victim; 185,017,485.5 XRP to attacker stash. Sources: Tibane, XRPL tx 78E31E7B\u2026",
+    "rBtttd61FExHC68vsZ8dqmS3DfjFEceA1A": "Victim; 14,693,052.5 XRP. Sources: Tibane, XRPL.",
+    "rfQ9EcLkU6WnNmkS3EwUkFeXeN47Rk8Cvi": "Victim; 13,140,680.4 XRP. Sources: Tibane, XRPL.",
+    "rarG6FaeYhnzSKSS5EEPofo4gFsPn2bZKk": "Victim; 11,955,157.6 XRP. Sources: Tibane, XRPL.",
+    "rNU4eAowPuixS5ZCWaRL72UUeKgxcKExpK": "Victim; 8,655,567.1 XRP. Sources: Tibane, XRPL.",
+    "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx": "Received 233,461,943.1 XRP; peeled 2 Nov into 6 wallets. Sources: Tibane, Whale Alert, Bitcoin.com, XRPL.",
+    "rhXtRtpfZRAKVayWd5Z5kRJ2YXYkcuxNRD": "Nov 2 peel from rK21\u2026. Source: XRPL / Whale Alert.",
+    "rsNoNkb1zqMBR1rjbrasUzExqjCDXseisW": "Nov 2 peel from rK21\u2026. Source: XRPL / Whale Alert.",
+    "rhfA8QzpcDPYX3safySLrvT5afnNjHc9XB": "Nov 2 peel from rK21\u2026. Source: XRPL / Whale Alert.",
+    "rKxwzjpZj5r9eXnCJQvLVUnebpGEHTDH1F": "Nov 2 peel from rK21\u2026. Source: XRPL / Whale Alert.",
+    "ryB7NESZcttqzRioiD5L6Kf5tFL87ktmx": "Nov 2 peel from rK21\u2026. Source: XRPL / Whale Alert.",
+    "raoMrxbMFo5xpVfE9VPoEuVpv1CTtebm5t": "Nov 2 peel (~33.46M) from rK21\u2026. Source: XRPL / Whale Alert."
    },
    "edges": {}
   },
@@ -109,6 +127,96 @@
    },
    "AffzFDKZbyMiU11zmVBoAqD25ugpr7xoWWyRyGigBEaU": {
     "name": "SOL holder (attacker)",
+    "kind": "hack",
+    "color": ""
+   },
+   "TDqSquXBgUCLYvYC4XZgrprLK589dkhSCf": {
+    "name": "Binance TRON hot (victim)",
+    "kind": "exchange",
+    "color": ""
+   },
+   "TG5iBMQPrDzJJAUM8GMVBf1hRaJ1wvzsGi": {
+    "name": "TRON drain hub",
+    "kind": "hack",
+    "color": ""
+   },
+   "TPBkSjkCMn2ckrMuAP8n2J1jdjbw76bKN4": {
+    "name": "TRON swap hop",
+    "kind": "hack",
+    "color": ""
+   },
+   "TCzBTkqn66yApqbYoPezaEQosM5DAd7Y62": {
+    "name": "TRON USDT stash (65.99M)",
+    "kind": "hack",
+    "color": ""
+   },
+   "TSpe5HC3PRD2svJcr1YoGszhHk2mtkyZ8A": {
+    "name": "TRON TRX swap out (~638M)",
+    "kind": "hack",
+    "color": ""
+   },
+   "TRBdWqHnDVSZCVGfgHdKFLQPirQcA2PRki": {
+    "name": "TRON TRX disperser",
+    "kind": "hack",
+    "color": ""
+   },
+   "rDAE53VfMvftPB4ogpWGWvzkQxfht6JPxr": {
+    "name": "Binance XRP hot (victim)",
+    "kind": "exchange",
+    "color": ""
+   },
+   "rBtttd61FExHC68vsZ8dqmS3DfjFEceA1A": {
+    "name": "Binance XRP hot 2 (victim)",
+    "kind": "exchange",
+    "color": ""
+   },
+   "rfQ9EcLkU6WnNmkS3EwUkFeXeN47Rk8Cvi": {
+    "name": "Binance XRP hot 3 (victim)",
+    "kind": "exchange",
+    "color": ""
+   },
+   "rarG6FaeYhnzSKSS5EEPofo4gFsPn2bZKk": {
+    "name": "Binance XRP hot 4 (victim)",
+    "kind": "exchange",
+    "color": ""
+   },
+   "rNU4eAowPuixS5ZCWaRL72UUeKgxcKExpK": {
+    "name": "Binance XRP hot 5 (victim)",
+    "kind": "exchange",
+    "color": ""
+   },
+   "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx": {
+    "name": "XRP attacker stash",
+    "kind": "hack",
+    "color": ""
+   },
+   "rhXtRtpfZRAKVayWd5Z5kRJ2YXYkcuxNRD": {
+    "name": "XRP peel ~40M",
+    "kind": "hack",
+    "color": ""
+   },
+   "rsNoNkb1zqMBR1rjbrasUzExqjCDXseisW": {
+    "name": "XRP peel ~40M",
+    "kind": "hack",
+    "color": ""
+   },
+   "rhfA8QzpcDPYX3safySLrvT5afnNjHc9XB": {
+    "name": "XRP peel ~40M",
+    "kind": "hack",
+    "color": ""
+   },
+   "rKxwzjpZj5r9eXnCJQvLVUnebpGEHTDH1F": {
+    "name": "XRP peel ~40M",
+    "kind": "hack",
+    "color": ""
+   },
+   "ryB7NESZcttqzRioiD5L6Kf5tFL87ktmx": {
+    "name": "XRP peel ~40M",
+    "kind": "hack",
+    "color": ""
+   },
+   "raoMrxbMFo5xpVfE9VPoEuVpv1CTtebm5t": {
+    "name": "XRP peel ~33.5M",
     "kind": "hack",
     "color": ""
    }
@@ -589,6 +697,510 @@
       "x": 80,
       "y": 300
      }
+    },
+    {
+     "data": {
+      "id": "TDqSquXBgUCLYvYC4XZgrprLK589dkhSCf",
+      "lbl": "Binance TRON hot (victim)",
+      "info": {
+       "id": "TDqSquXBgUCLYvYC4XZgrprLK589dkhSCf",
+       "chain": "tron",
+       "kind": "exchange",
+       "name": "Binance TRON hot (victim)",
+       "balance": null,
+       "unit": "TRX",
+       "balance_usd": null,
+       "label": {
+        "name": "Binance TRON hot (victim)",
+        "kind": "exchange",
+        "risk": 10
+       },
+       "risk": 10
+      },
+      "chain": "tron",
+      "kind": "exchange",
+      "note": true
+     },
+     "position": {
+      "x": -520,
+      "y": 280
+     }
+    },
+    {
+     "data": {
+      "id": "TG5iBMQPrDzJJAUM8GMVBf1hRaJ1wvzsGi",
+      "lbl": "TRON drain hub",
+      "info": {
+       "id": "TG5iBMQPrDzJJAUM8GMVBf1hRaJ1wvzsGi",
+       "chain": "tron",
+       "kind": "hack",
+       "name": "TRON drain hub",
+       "balance": null,
+       "unit": "TRX",
+       "balance_usd": null,
+       "label": {
+        "name": "TRON drain hub",
+        "kind": "hack",
+        "risk": 80
+       },
+       "risk": 80
+      },
+      "chain": "tron",
+      "kind": "hack",
+      "note": true
+     },
+     "position": {
+      "x": -300,
+      "y": 280
+     }
+    },
+    {
+     "data": {
+      "id": "TPBkSjkCMn2ckrMuAP8n2J1jdjbw76bKN4",
+      "lbl": "TRON swap hop",
+      "info": {
+       "id": "TPBkSjkCMn2ckrMuAP8n2J1jdjbw76bKN4",
+       "chain": "tron",
+       "kind": "hack",
+       "name": "TRON swap hop",
+       "balance": null,
+       "unit": "TRX",
+       "balance_usd": null,
+       "label": {
+        "name": "TRON swap hop",
+        "kind": "hack",
+        "risk": 80
+       },
+       "risk": 80
+      },
+      "chain": "tron",
+      "kind": "hack",
+      "note": true
+     },
+     "position": {
+      "x": -80,
+      "y": 280
+     }
+    },
+    {
+     "data": {
+      "id": "TCzBTkqn66yApqbYoPezaEQosM5DAd7Y62",
+      "lbl": "TRON USDT stash (65.99M)",
+      "info": {
+       "id": "TCzBTkqn66yApqbYoPezaEQosM5DAd7Y62",
+       "chain": "tron",
+       "kind": "hack",
+       "name": "TRON USDT stash (65.99M)",
+       "balance": null,
+       "unit": "TRX",
+       "balance_usd": null,
+       "label": {
+        "name": "TRON USDT stash (65.99M)",
+        "kind": "hack",
+        "risk": 80
+       },
+       "risk": 80
+      },
+      "chain": "tron",
+      "kind": "hack",
+      "note": true
+     },
+     "position": {
+      "x": -520,
+      "y": 420
+     }
+    },
+    {
+     "data": {
+      "id": "TSpe5HC3PRD2svJcr1YoGszhHk2mtkyZ8A",
+      "lbl": "TRON TRX swap out (~638M)",
+      "info": {
+       "id": "TSpe5HC3PRD2svJcr1YoGszhHk2mtkyZ8A",
+       "chain": "tron",
+       "kind": "hack",
+       "name": "TRON TRX swap out (~638M)",
+       "balance": null,
+       "unit": "TRX",
+       "balance_usd": null,
+       "label": {
+        "name": "TRON TRX swap out (~638M)",
+        "kind": "hack",
+        "risk": 80
+       },
+       "risk": 80
+      },
+      "chain": "tron",
+      "kind": "hack",
+      "note": true
+     },
+     "position": {
+      "x": -300,
+      "y": 420
+     }
+    },
+    {
+     "data": {
+      "id": "TRBdWqHnDVSZCVGfgHdKFLQPirQcA2PRki",
+      "lbl": "TRON TRX disperser",
+      "info": {
+       "id": "TRBdWqHnDVSZCVGfgHdKFLQPirQcA2PRki",
+       "chain": "tron",
+       "kind": "hack",
+       "name": "TRON TRX disperser",
+       "balance": null,
+       "unit": "TRX",
+       "balance_usd": null,
+       "label": {
+        "name": "TRON TRX disperser",
+        "kind": "hack",
+        "risk": 80
+       },
+       "risk": 80
+      },
+      "chain": "tron",
+      "kind": "hack",
+      "note": true
+     },
+     "position": {
+      "x": -80,
+      "y": 420
+     }
+    },
+    {
+     "data": {
+      "id": "rDAE53VfMvftPB4ogpWGWvzkQxfht6JPxr",
+      "lbl": "Binance XRP hot (victim)",
+      "info": {
+       "id": "rDAE53VfMvftPB4ogpWGWvzkQxfht6JPxr",
+       "chain": "xrp",
+       "kind": "exchange",
+       "name": "Binance XRP hot (victim)",
+       "balance": null,
+       "unit": "XRP",
+       "balance_usd": null,
+       "label": {
+        "name": "Binance XRP hot (victim)",
+        "kind": "exchange",
+        "risk": 10
+       },
+       "risk": 10
+      },
+      "chain": "xrp",
+      "kind": "exchange",
+      "note": true
+     },
+     "position": {
+      "x": 200,
+      "y": 280
+     }
+    },
+    {
+     "data": {
+      "id": "rBtttd61FExHC68vsZ8dqmS3DfjFEceA1A",
+      "lbl": "Binance XRP hot 2 (victim)",
+      "info": {
+       "id": "rBtttd61FExHC68vsZ8dqmS3DfjFEceA1A",
+       "chain": "xrp",
+       "kind": "exchange",
+       "name": "Binance XRP hot 2 (victim)",
+       "balance": null,
+       "unit": "XRP",
+       "balance_usd": null,
+       "label": {
+        "name": "Binance XRP hot 2 (victim)",
+        "kind": "exchange",
+        "risk": 10
+       },
+       "risk": 10
+      },
+      "chain": "xrp",
+      "kind": "exchange",
+      "note": true
+     },
+     "position": {
+      "x": 400,
+      "y": 280
+     }
+    },
+    {
+     "data": {
+      "id": "rfQ9EcLkU6WnNmkS3EwUkFeXeN47Rk8Cvi",
+      "lbl": "Binance XRP hot 3 (victim)",
+      "info": {
+       "id": "rfQ9EcLkU6WnNmkS3EwUkFeXeN47Rk8Cvi",
+       "chain": "xrp",
+       "kind": "exchange",
+       "name": "Binance XRP hot 3 (victim)",
+       "balance": null,
+       "unit": "XRP",
+       "balance_usd": null,
+       "label": {
+        "name": "Binance XRP hot 3 (victim)",
+        "kind": "exchange",
+        "risk": 10
+       },
+       "risk": 10
+      },
+      "chain": "xrp",
+      "kind": "exchange",
+      "note": true
+     },
+     "position": {
+      "x": 600,
+      "y": 280
+     }
+    },
+    {
+     "data": {
+      "id": "rarG6FaeYhnzSKSS5EEPofo4gFsPn2bZKk",
+      "lbl": "Binance XRP hot 4 (victim)",
+      "info": {
+       "id": "rarG6FaeYhnzSKSS5EEPofo4gFsPn2bZKk",
+       "chain": "xrp",
+       "kind": "exchange",
+       "name": "Binance XRP hot 4 (victim)",
+       "balance": null,
+       "unit": "XRP",
+       "balance_usd": null,
+       "label": {
+        "name": "Binance XRP hot 4 (victim)",
+        "kind": "exchange",
+        "risk": 10
+       },
+       "risk": 10
+      },
+      "chain": "xrp",
+      "kind": "exchange",
+      "note": true
+     },
+     "position": {
+      "x": 800,
+      "y": 280
+     }
+    },
+    {
+     "data": {
+      "id": "rNU4eAowPuixS5ZCWaRL72UUeKgxcKExpK",
+      "lbl": "Binance XRP hot 5 (victim)",
+      "info": {
+       "id": "rNU4eAowPuixS5ZCWaRL72UUeKgxcKExpK",
+       "chain": "xrp",
+       "kind": "exchange",
+       "name": "Binance XRP hot 5 (victim)",
+       "balance": null,
+       "unit": "XRP",
+       "balance_usd": null,
+       "label": {
+        "name": "Binance XRP hot 5 (victim)",
+        "kind": "exchange",
+        "risk": 10
+       },
+       "risk": 10
+      },
+      "chain": "xrp",
+      "kind": "exchange",
+      "note": true
+     },
+     "position": {
+      "x": 200,
+      "y": 410
+     }
+    },
+    {
+     "data": {
+      "id": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+      "lbl": "XRP attacker stash",
+      "info": {
+       "id": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+       "chain": "xrp",
+       "kind": "hack",
+       "name": "XRP attacker stash",
+       "balance": null,
+       "unit": "XRP",
+       "balance_usd": null,
+       "label": {
+        "name": "XRP attacker stash",
+        "kind": "hack",
+        "risk": 80
+       },
+       "risk": 80
+      },
+      "chain": "xrp",
+      "kind": "hack",
+      "note": true
+     },
+     "position": {
+      "x": 400,
+      "y": 410
+     }
+    },
+    {
+     "data": {
+      "id": "rhXtRtpfZRAKVayWd5Z5kRJ2YXYkcuxNRD",
+      "lbl": "XRP peel ~40M",
+      "info": {
+       "id": "rhXtRtpfZRAKVayWd5Z5kRJ2YXYkcuxNRD",
+       "chain": "xrp",
+       "kind": "hack",
+       "name": "XRP peel ~40M",
+       "balance": null,
+       "unit": "XRP",
+       "balance_usd": null,
+       "label": {
+        "name": "XRP peel ~40M",
+        "kind": "hack",
+        "risk": 80
+       },
+       "risk": 80
+      },
+      "chain": "xrp",
+      "kind": "hack",
+      "note": true
+     },
+     "position": {
+      "x": 600,
+      "y": 410
+     }
+    },
+    {
+     "data": {
+      "id": "rsNoNkb1zqMBR1rjbrasUzExqjCDXseisW",
+      "lbl": "XRP peel ~40M",
+      "info": {
+       "id": "rsNoNkb1zqMBR1rjbrasUzExqjCDXseisW",
+       "chain": "xrp",
+       "kind": "hack",
+       "name": "XRP peel ~40M",
+       "balance": null,
+       "unit": "XRP",
+       "balance_usd": null,
+       "label": {
+        "name": "XRP peel ~40M",
+        "kind": "hack",
+        "risk": 80
+       },
+       "risk": 80
+      },
+      "chain": "xrp",
+      "kind": "hack",
+      "note": true
+     },
+     "position": {
+      "x": 800,
+      "y": 410
+     }
+    },
+    {
+     "data": {
+      "id": "rhfA8QzpcDPYX3safySLrvT5afnNjHc9XB",
+      "lbl": "XRP peel ~40M",
+      "info": {
+       "id": "rhfA8QzpcDPYX3safySLrvT5afnNjHc9XB",
+       "chain": "xrp",
+       "kind": "hack",
+       "name": "XRP peel ~40M",
+       "balance": null,
+       "unit": "XRP",
+       "balance_usd": null,
+       "label": {
+        "name": "XRP peel ~40M",
+        "kind": "hack",
+        "risk": 80
+       },
+       "risk": 80
+      },
+      "chain": "xrp",
+      "kind": "hack",
+      "note": true
+     },
+     "position": {
+      "x": 200,
+      "y": 540
+     }
+    },
+    {
+     "data": {
+      "id": "rKxwzjpZj5r9eXnCJQvLVUnebpGEHTDH1F",
+      "lbl": "XRP peel ~40M",
+      "info": {
+       "id": "rKxwzjpZj5r9eXnCJQvLVUnebpGEHTDH1F",
+       "chain": "xrp",
+       "kind": "hack",
+       "name": "XRP peel ~40M",
+       "balance": null,
+       "unit": "XRP",
+       "balance_usd": null,
+       "label": {
+        "name": "XRP peel ~40M",
+        "kind": "hack",
+        "risk": 80
+       },
+       "risk": 80
+      },
+      "chain": "xrp",
+      "kind": "hack",
+      "note": true
+     },
+     "position": {
+      "x": 400,
+      "y": 540
+     }
+    },
+    {
+     "data": {
+      "id": "ryB7NESZcttqzRioiD5L6Kf5tFL87ktmx",
+      "lbl": "XRP peel ~40M",
+      "info": {
+       "id": "ryB7NESZcttqzRioiD5L6Kf5tFL87ktmx",
+       "chain": "xrp",
+       "kind": "hack",
+       "name": "XRP peel ~40M",
+       "balance": null,
+       "unit": "XRP",
+       "balance_usd": null,
+       "label": {
+        "name": "XRP peel ~40M",
+        "kind": "hack",
+        "risk": 80
+       },
+       "risk": 80
+      },
+      "chain": "xrp",
+      "kind": "hack",
+      "note": true
+     },
+     "position": {
+      "x": 600,
+      "y": 540
+     }
+    },
+    {
+     "data": {
+      "id": "raoMrxbMFo5xpVfE9VPoEuVpv1CTtebm5t",
+      "lbl": "XRP peel ~33.5M",
+      "info": {
+       "id": "raoMrxbMFo5xpVfE9VPoEuVpv1CTtebm5t",
+       "chain": "xrp",
+       "kind": "hack",
+       "name": "XRP peel ~33.5M",
+       "balance": null,
+       "unit": "XRP",
+       "balance_usd": null,
+       "label": {
+        "name": "XRP peel ~33.5M",
+        "kind": "hack",
+        "risk": 80
+       },
+       "risk": 80
+      },
+      "chain": "xrp",
+      "kind": "hack",
+      "note": true
+     },
+     "position": {
+      "x": 800,
+      "y": 540
+     }
     }
    ],
    "edges": [
@@ -787,6 +1399,312 @@
       "unit": "ETH",
       "usd": 0,
       "note": "Type-4 delegation tx 0xad99264d\u2026298b @ 20:20:59",
+      "count": 1
+     }
+    },
+    {
+     "id": "TDqSquXBgU_TG5iBMQPrD_USDT",
+     "source": "TDqSquXBgUCLYvYC4XZgrprLK589dkhSCf",
+     "target": "TG5iBMQPrDzJJAUM8GMVBf1hRaJ1wvzsGi",
+     "amount": 612729468,
+     "unit": "USDT",
+     "usd": null,
+     "lbl": "612.73M USDT",
+     "info": {
+      "source": "TDqSquXBgUCLYvYC4XZgrprLK589dkhSCf",
+      "target": "TG5iBMQPrDzJJAUM8GMVBf1hRaJ1wvzsGi",
+      "amount": 612729468,
+      "unit": "USDT",
+      "usd": null,
+      "note": "USDT drain @ ~20:22 UTC 29 Oct (Tibane/TronGrid)",
+      "count": 1
+     }
+    },
+    {
+     "id": "TDq_TG5_TRX",
+     "source": "TDqSquXBgUCLYvYC4XZgrprLK589dkhSCf",
+     "target": "TG5iBMQPrDzJJAUM8GMVBf1hRaJ1wvzsGi",
+     "amount": 46394098,
+     "unit": "TRX",
+     "usd": null,
+     "lbl": "46.39M TRX",
+     "info": {
+      "source": "TDqSquXBgUCLYvYC4XZgrprLK589dkhSCf",
+      "target": "TG5iBMQPrDzJJAUM8GMVBf1hRaJ1wvzsGi",
+      "amount": 46394098,
+      "unit": "TRX",
+      "usd": null,
+      "note": "Native TRX drain with USDT (Tibane/TronGrid)",
+      "count": 1
+     }
+    },
+    {
+     "id": "TG5iBMQPrD_TPBkSjkCMn_USDT",
+     "source": "TG5iBMQPrDzJJAUM8GMVBf1hRaJ1wvzsGi",
+     "target": "TPBkSjkCMn2ckrMuAP8n2J1jdjbw76bKN4",
+     "amount": 300000000,
+     "unit": "USDT",
+     "usd": null,
+     "lbl": "300.00M USDT",
+     "info": {
+      "source": "TG5iBMQPrDzJJAUM8GMVBf1hRaJ1wvzsGi",
+      "target": "TPBkSjkCMn2ckrMuAP8n2J1jdjbw76bKN4",
+      "amount": 300000000,
+      "unit": "USDT",
+      "usd": null,
+      "note": "300M USDT forwarded before freeze",
+      "count": 1
+     }
+    },
+    {
+     "id": "TPBkSjkCMn_TCzBTkqn66_USDT",
+     "source": "TPBkSjkCMn2ckrMuAP8n2J1jdjbw76bKN4",
+     "target": "TCzBTkqn66yApqbYoPezaEQosM5DAd7Y62",
+     "amount": 65990000,
+     "unit": "USDT",
+     "usd": null,
+     "lbl": "65.99M USDT",
+     "info": {
+      "source": "TPBkSjkCMn2ckrMuAP8n2J1jdjbw76bKN4",
+      "target": "TCzBTkqn66yApqbYoPezaEQosM5DAd7Y62",
+      "amount": 65990000,
+      "unit": "USDT",
+      "usd": null,
+      "note": "65.99M USDT hop",
+      "count": 1
+     }
+    },
+    {
+     "id": "TPBkSjkCMn_TSpe5HC3PR_TRX",
+     "source": "TPBkSjkCMn2ckrMuAP8n2J1jdjbw76bKN4",
+     "target": "TSpe5HC3PRD2svJcr1YoGszhHk2mtkyZ8A",
+     "amount": 638190941.68,
+     "unit": "TRX",
+     "usd": null,
+     "lbl": "638.19M TRX",
+     "info": {
+      "source": "TPBkSjkCMn2ckrMuAP8n2J1jdjbw76bKN4",
+      "target": "TSpe5HC3PRD2svJcr1YoGszhHk2mtkyZ8A",
+      "amount": 638190941.68,
+      "unit": "TRX",
+      "usd": null,
+      "note": "USDT\u2192TRX swap proceeds (~638M TRX)",
+      "count": 1
+     }
+    },
+    {
+     "id": "TG5iBMQPrD_TRBdWqHnDV_TRX",
+     "source": "TG5iBMQPrDzJJAUM8GMVBf1hRaJ1wvzsGi",
+     "target": "TRBdWqHnDVSZCVGfgHdKFLQPirQcA2PRki",
+     "amount": 46383069.13,
+     "unit": "TRX",
+     "usd": null,
+     "lbl": "46.38M TRX",
+     "info": {
+      "source": "TG5iBMQPrDzJJAUM8GMVBf1hRaJ1wvzsGi",
+      "target": "TRBdWqHnDVSZCVGfgHdKFLQPirQcA2PRki",
+      "amount": 46383069.13,
+      "unit": "TRX",
+      "usd": null,
+      "note": "TRX to disperser",
+      "count": 1
+     }
+    },
+    {
+     "id": "rDAE53VfMv_rK21t6nGLy_XRP",
+     "source": "rDAE53VfMvftPB4ogpWGWvzkQxfht6JPxr",
+     "target": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+     "amount": 185017485.5,
+     "unit": "XRP",
+     "usd": null,
+     "lbl": "185.02M XRP",
+     "info": {
+      "source": "rDAE53VfMvftPB4ogpWGWvzkQxfht6JPxr",
+      "target": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+      "amount": 185017485.5,
+      "unit": "XRP",
+      "usd": null,
+      "note": "Oct 29 drain into attacker stash (XRPL verified)",
+      "count": 1
+     }
+    },
+    {
+     "id": "rBtttd61FE_rK21t6nGLy_XRP",
+     "source": "rBtttd61FExHC68vsZ8dqmS3DfjFEceA1A",
+     "target": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+     "amount": 14693052.5,
+     "unit": "XRP",
+     "usd": null,
+     "lbl": "14.69M XRP",
+     "info": {
+      "source": "rBtttd61FExHC68vsZ8dqmS3DfjFEceA1A",
+      "target": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+      "amount": 14693052.5,
+      "unit": "XRP",
+      "usd": null,
+      "note": "Oct 29 drain into attacker stash (XRPL verified)",
+      "count": 1
+     }
+    },
+    {
+     "id": "rfQ9EcLkU6_rK21t6nGLy_XRP",
+     "source": "rfQ9EcLkU6WnNmkS3EwUkFeXeN47Rk8Cvi",
+     "target": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+     "amount": 13140680.4,
+     "unit": "XRP",
+     "usd": null,
+     "lbl": "13.14M XRP",
+     "info": {
+      "source": "rfQ9EcLkU6WnNmkS3EwUkFeXeN47Rk8Cvi",
+      "target": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+      "amount": 13140680.4,
+      "unit": "XRP",
+      "usd": null,
+      "note": "Oct 29 drain into attacker stash (XRPL verified)",
+      "count": 1
+     }
+    },
+    {
+     "id": "rarG6FaeYh_rK21t6nGLy_XRP",
+     "source": "rarG6FaeYhnzSKSS5EEPofo4gFsPn2bZKk",
+     "target": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+     "amount": 11955157.6,
+     "unit": "XRP",
+     "usd": null,
+     "lbl": "11.96M XRP",
+     "info": {
+      "source": "rarG6FaeYhnzSKSS5EEPofo4gFsPn2bZKk",
+      "target": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+      "amount": 11955157.6,
+      "unit": "XRP",
+      "usd": null,
+      "note": "Oct 29 drain into attacker stash (XRPL verified)",
+      "count": 1
+     }
+    },
+    {
+     "id": "rNU4eAowPu_rK21t6nGLy_XRP",
+     "source": "rNU4eAowPuixS5ZCWaRL72UUeKgxcKExpK",
+     "target": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+     "amount": 8655567.1,
+     "unit": "XRP",
+     "usd": null,
+     "lbl": "8.65557e+06 XRP",
+     "info": {
+      "source": "rNU4eAowPuixS5ZCWaRL72UUeKgxcKExpK",
+      "target": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+      "amount": 8655567.1,
+      "unit": "XRP",
+      "usd": null,
+      "note": "Oct 29 drain into attacker stash (XRPL verified)",
+      "count": 1
+     }
+    },
+    {
+     "id": "rK21t6nGLy_rhXtRtpfZR_XRP",
+     "source": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+     "target": "rhXtRtpfZRAKVayWd5Z5kRJ2YXYkcuxNRD",
+     "amount": 40001000,
+     "unit": "XRP",
+     "usd": null,
+     "lbl": "40.00M XRP",
+     "info": {
+      "source": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+      "target": "rhXtRtpfZRAKVayWd5Z5kRJ2YXYkcuxNRD",
+      "amount": 40001000,
+      "unit": "XRP",
+      "usd": null,
+      "note": "2 Nov peel from stash (XRPL / Whale Alert)",
+      "count": 1
+     }
+    },
+    {
+     "id": "rK21t6nGLy_rsNoNkb1zq_XRP",
+     "source": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+     "target": "rsNoNkb1zqMBR1rjbrasUzExqjCDXseisW",
+     "amount": 40001000,
+     "unit": "XRP",
+     "usd": null,
+     "lbl": "40.00M XRP",
+     "info": {
+      "source": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+      "target": "rsNoNkb1zqMBR1rjbrasUzExqjCDXseisW",
+      "amount": 40001000,
+      "unit": "XRP",
+      "usd": null,
+      "note": "2 Nov peel from stash (XRPL / Whale Alert)",
+      "count": 1
+     }
+    },
+    {
+     "id": "rK21t6nGLy_rhfA8QzpcD_XRP",
+     "source": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+     "target": "rhfA8QzpcDPYX3safySLrvT5afnNjHc9XB",
+     "amount": 40000000,
+     "unit": "XRP",
+     "usd": null,
+     "lbl": "40.00M XRP",
+     "info": {
+      "source": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+      "target": "rhfA8QzpcDPYX3safySLrvT5afnNjHc9XB",
+      "amount": 40000000,
+      "unit": "XRP",
+      "usd": null,
+      "note": "2 Nov peel from stash (XRPL / Whale Alert)",
+      "count": 1
+     }
+    },
+    {
+     "id": "rK21t6nGLy_rKxwzjpZj5_XRP",
+     "source": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+     "target": "rKxwzjpZj5r9eXnCJQvLVUnebpGEHTDH1F",
+     "amount": 40000000,
+     "unit": "XRP",
+     "usd": null,
+     "lbl": "40.00M XRP",
+     "info": {
+      "source": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+      "target": "rKxwzjpZj5r9eXnCJQvLVUnebpGEHTDH1F",
+      "amount": 40000000,
+      "unit": "XRP",
+      "usd": null,
+      "note": "2 Nov peel from stash (XRPL / Whale Alert)",
+      "count": 1
+     }
+    },
+    {
+     "id": "rK21t6nGLy_ryB7NESZct_XRP",
+     "source": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+     "target": "ryB7NESZcttqzRioiD5L6Kf5tFL87ktmx",
+     "amount": 40000000,
+     "unit": "XRP",
+     "usd": null,
+     "lbl": "40.00M XRP",
+     "info": {
+      "source": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+      "target": "ryB7NESZcttqzRioiD5L6Kf5tFL87ktmx",
+      "amount": 40000000,
+      "unit": "XRP",
+      "usd": null,
+      "note": "2 Nov peel from stash (XRPL / Whale Alert)",
+      "count": 1
+     }
+    },
+    {
+     "id": "rK21t6nGLy_raoMrxbMFo_XRP",
+     "source": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+     "target": "raoMrxbMFo5xpVfE9VPoEuVpv1CTtebm5t",
+     "amount": 33455920,
+     "unit": "XRP",
+     "usd": null,
+     "lbl": "33.46M XRP",
+     "info": {
+      "source": "rK21t6nGLy4MNDqhvy3pGwcLFy25qgfzMx",
+      "target": "raoMrxbMFo5xpVfE9VPoEuVpv1CTtebm5t",
+      "amount": 33455920,
+      "unit": "XRP",
+      "usd": null,
+      "note": "2 Nov peel from stash (XRPL / Whale Alert)",
       "count": 1
      }
     }
@@ -6292,7 +7210,10 @@
    "https://808bits.com/articles/binance-hot-wallet-eip-7702-delegations/",
    "https://drk.vc/news/binance-14-eip-7702-drain",
    "https://hasky00.github.io/haskDetect/",
-   "https://www.tibane.net/research/binance-hack"
+   "https://www.tibane.net/research/binance-hack",
+   "https://news.bitcoin.com/security/binance-hacker-moves-293m-stolen-xrp/",
+   "https://tronscan.org/",
+   "https://xrpscan.com/"
   ]
  }
 }

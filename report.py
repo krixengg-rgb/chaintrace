@@ -36,7 +36,7 @@ def t_both(ts):
     a, b = datetime.fromtimestamp(ts, UK), datetime.fromtimestamp(ts, timezone.utc)
     return f"{t_uk(ts)}\n" + (b.strftime("%H:%M:%S UTC") if a.date() == b.date() else t_utc(ts))
 def t_line(ts): return f"{t_uk(ts)} ({datetime.fromtimestamp(ts, timezone.utc).strftime('%H:%M:%S UTC')})" if ts else "–"
-def code(c): return (c or "?").upper() if c in ("btc", "eth", "sol") else chain_name(c)
+def code(c): return (c or "?").upper() if c in ("btc", "eth", "sol", "tron", "xrp") else chain_name(c)
 def num(x, d=8):
     if x is None: return "–"
     try: x = float(x)
@@ -477,6 +477,8 @@ async def build(p):
         "All transaction data comes from public blockchain records, retrieved through third-party APIs. ChainTrace does not run its own nodes, so results depend on those services being available and accurate.",
         "Bitcoin: mempool.space REST API (address and transaction history, inputs and outputs, block times).",
         "Ethereum: Blockscout public API (eth.blockscout.com) for transfers, token transfers and public tags. Public JSON-RPC endpoints (e.g. publicnode, drpc, Cloudflare) for balances. Ethplorer as a fallback.",
+        "TRON: TronGrid (api.trongrid.io) for account info, native TRX TransferContract history and TRC-20 transfers (notably USDT-TRC20), with TronStack as a fallback. Addresses validated as base58check (T…) or hex 41….",
+        "XRP Ledger: public rippled JSON-RPC (xrplcluster.com, s1/s2.ripple.com) account_info and account_tx. Payments include destination tags (used by VASPs) and issued currencies with issuer.",
         "Solana: the public Solana JSON-RPC (getSignaturesForAddress / getTransaction), parsing native SOL and SPL token balance changes.",
         "Cross-chain: bridge indexers, all public and keyless: Wormholescan, deBridge DLN stats API, Mayan explorer API, Across API, THORChain/Maya Midgard, LayerZero Scan and Relay. THORChain/Maya inbound vault lists come from THORNode/MayaNode. EVM L2 public RPCs (Arbitrum, Optimism, Base, Polygon) are used for heuristic matching.",
         "Attribution datasets: OFAC SDN digital-currency addresses, GraphSense TagPacks, dawsbot/eth-labels, etherscan-labels, Forta labelled datasets, openlabels and Solana label aggregates, plus a ChainTrace curated seed list and allowlist. Each label records its dataset, licence and confidence (Section 5 and Appendix A).",
@@ -484,7 +486,7 @@ async def build(p):
     ], size=7.8)
     pdf.h2("How flows are derived")
     pdf.bullets([
-        "Account chains (Ethereum, Solana): each edge is a native or token transfer from one address to another, with the transaction hash, time, asset and amount as decoded from the chain.",
+        "Account chains (Ethereum, Solana, TRON, XRP Ledger): each edge is a native or token transfer from one address to another, with the transaction hash, time, asset and amount as decoded from the chain. On XRP, destination tags are recorded as edge metadata when present.",
         "Bitcoin (UTXO): Bitcoin does not record which input paid which output. When the subject spends, ChainTrace draws edges from the subject to every output. When the subject receives, each input address is drawn as a sender. Per-edge amounts are therefore an attribution model, not a ledger fact. ChainTrace also applies the common-input-ownership heuristic (addresses co-spending in one transaction are probably controlled by the same entity), which can be wrong, e.g. for CoinJoin and PayJoin transactions.",
         "Aggregation: repeated transfers between the same pair of addresses in the same asset are merged into one edge (count, first/last time). The trail table gives the latest hash, and the full set can be listed from the explorer.",
         "AutoTrace follows the largest outflows hop by hop (top-K per address, minimum USD value) until it reaches labelled endpoints, dead ends or its limits. It filters noise (dust, spam tokens, approvals). Endpoint “flow in” is an upper bound, because tracing does not apply FIFO/LIFO or proportional taint allocation.",
@@ -494,7 +496,7 @@ async def build(p):
     ], size=7.8)
     pdf.h2("Known gaps and limitations")
     pdf.bullets([
-        "Coverage: only Bitcoin, Ethereum and Solana are traced natively. EVM L2s and other chains appear only as bridge destinations, for context. Privacy coins, Lightning, custodial (off-chain) transfers inside exchanges, and OTC desks are not visible.",
+        "Coverage: Bitcoin, Ethereum, Solana, TRON and the XRP Ledger are traced natively. EVM L2s and other chains appear as bridge destinations for context. Privacy coins, Lightning, custodial (off-chain) transfers inside exchanges, and OTC desks are not visible.",
         "Labels can be incomplete, out of date or wrong. The absence of a label does not mean an address is unattributed in commercial datasets. Historical rotated THORChain vaults may be unlabelled.",
         "Bridges not covered: Circle CCTP direct, native L2 canonical bridges, and other bridges without a free public indexer. The Relay public API is rate-limited. deBridge and Across cannot be looked up from the destination transaction.",
         "APIs can rate-limit, time out or return partial pages. ChainTrace caps queries per request, so graphs may be partial; see the errors noted in Appendix A.",

@@ -12,7 +12,7 @@ const XC={base:['#3d7bff','Base','B','https://basescan.org/tx/','https://basesca
  xrp:['#cfd8e3','XRP','✕','https://xrpscan.com/tx/','https://xrpscan.com/account/'],thor:['#33ff99','THOR','ᚱ','https://runescan.io/tx/','https://runescan.io/address/'],
  sui:['#4da2ff','Sui','S','https://suiscan.xyz/mainnet/tx/','https://suiscan.xyz/mainnet/account/'],gaia:['#6f7390','Cosmos','⚛','https://www.mintscan.io/cosmos/tx/','https://www.mintscan.io/cosmos/address/']};
 for(const[k,[c,n,sym,tx,ad]]of Object.entries(XC))if(!CH[k])CH[k]={c,n,sym,tx,ad,foreign:1};
-const NATIVE=['btc','eth','sol'];
+const NATIVE=['btc','eth','sol','tron','xrp'];
 const css=document.createElement('style');css.textContent=`
 .badge.xc{color:#9fe7f5;border-color:rgba(34,211,238,.45);background:rgba(34,211,238,.08)}
 .xcard{overflow-wrap:anywhere;min-width:0;border:1px solid rgba(34,211,238,.35);box-shadow:0 0 0 1px rgba(34,211,238,.08) inset}

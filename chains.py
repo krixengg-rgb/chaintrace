@@ -1,6 +1,7 @@
 import httpx, time, asyncio, re, json, sqlite3, os, base64
 from datetime import datetime
 from labels import label
+import addrutil
 # HTTP cache: disposable. On an ephemeral disk (Render free) it is simply rebuilt after restarts.
 CACHE_PATH = os.environ.get("CHAINTRACE_CACHE", os.path.join(os.path.dirname(__file__), "cache.sqlite"))
 CACHE_MAX_ROWS = int(os.environ.get("CHAINTRACE_CACHE_MAX_ROWS", "20000"))
@@ -32,9 +33,11 @@ class _C:
 _cache = _C()
 TTL = 300
 LONG = 30 * 86400   # immutable data (old pages, confirmed txs)
-SEM = {"mempool.space": asyncio.Semaphore(3), "blockscout": asyncio.Semaphore(4), "solana": asyncio.Semaphore(1), "other": asyncio.Semaphore(4)}
+SEM = {"mempool.space": asyncio.Semaphore(3), "blockscout": asyncio.Semaphore(4), "solana": asyncio.Semaphore(1), "trongrid": asyncio.Semaphore(3), "xrpl": asyncio.Semaphore(2), "other": asyncio.Semaphore(4)}
 def _sem(u):
     if u.startswith(os.environ.get("CHAINTRACE_BS", "https://eth.blockscout.com")): return SEM["blockscout"]   # stalled Blockscout never starves RPC
+    if "trongrid.io" in u or "tronstack.io" in u: return SEM["trongrid"]
+    if "xrplcluster.com" in u or "ripple.com" in u or "xrpl.org" in u: return SEM["xrpl"]
     return next((v for k, v in SEM.items() if k in u), SEM["other"])
 def ts_of(t):
     if t is None: return None
@@ -52,14 +55,16 @@ async def ensure_prices():
     if time.time() - _price_ts[0] < 600: return PRICE
     _price_ts[0] = time.time()
     try:
-        d = await asyncio.wait_for(get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd", ttl=600), 4)
+        d = await asyncio.wait_for(get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,tron,ripple&vs_currencies=usd", ttl=600), 4)
         b, e, s = d["bitcoin"]["usd"], d["ethereum"]["usd"], d["solana"]["usd"]
-        PRICE.update({"BTC": b, "WBTC": b, "ETH": e, "WETH": e, "STETH": e, "SOL": s, "WSOL": s})
+        PRICE.update({"BTC": b, "WBTC": b, "ETH": e, "WETH": e, "STETH": e, "SOL": s, "WSOL": s,
+                      "TRX": d["tron"]["usd"], "XRP": d["ripple"]["usd"]})
     except Exception as ex:
         try:   # fallback: Coinbase spot (CoinGecko often 429s shared cloud IPs such as Render)
-            r = await asyncio.wait_for(asyncio.gather(*[get(f"https://api.coinbase.com/v2/prices/{c}-USD/spot", ttl=600) for c in ("BTC", "ETH", "SOL")]), 5)
-            b, e, s = (float(x["data"]["amount"]) for x in r)
-            PRICE.update({"BTC": b, "WBTC": b, "ETH": e, "WETH": e, "STETH": e, "SOL": s, "WSOL": s})
+            syms = ("BTC", "ETH", "SOL", "TRX", "XRP")
+            r = await asyncio.wait_for(asyncio.gather(*[get(f"https://api.coinbase.com/v2/prices/{c}-USD/spot", ttl=600) for c in syms]), 5)
+            b, e, s, trx, xrp = (float(x["data"]["amount"]) for x in r)
+            PRICE.update({"BTC": b, "WBTC": b, "ETH": e, "WETH": e, "STETH": e, "SOL": s, "WSOL": s, "TRX": trx, "XRP": xrp})
         except Exception as ex2:
             print("price fetch failed:", ex, "| fallback:", ex2); _price_ts[0] = time.time() - 540   # retry in ~1 min
     return PRICE
@@ -104,7 +109,9 @@ def detect(q):
     q = q.strip()
     if re.fullmatch(r"0x[0-9a-fA-F]{40}", q): return "eth", "address"
     if re.fullmatch(r"0x[0-9a-fA-F]{64}", q): return "eth", "tx"
-    if re.fullmatch(r"[0-9a-fA-F]{64}", q): return "btc", "tx"
+    if addrutil.is_tron_address(q): return "tron", "address"
+    if addrutil.is_xrp_address(q): return "xrp", "address"
+    if re.fullmatch(r"[0-9a-fA-F]{64}", q): return "btc", "tx"   # bare 64-hex: BTC by default; pass chain=tron|xrp to force
     if re.fullmatch(r"(bc1[02-9ac-hj-np-z]{11,71}|[13][1-9A-HJ-NP-Za-km-z]{25,34})", q): return "btc", "address"
     if re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{80,90}", q): return "sol", "tx"
     if re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", q): return "sol", "address"
@@ -621,3 +628,250 @@ def merge_cp(a, b):
         y["flags"] = sorted(set(y.get("flags") or []) & set(x.get("flags") or []))
     ser = sorted((a.get("series") or []) + (b.get("series") or []))
     return {"counterparties": sorted(m.values(), key=lambda x: (-x["usd"], -x["count"]))[:300], "series": ser[-1500:]}
+
+# ---------------- TRON (TronGrid + TronStack fallback) ----------------
+TRON_API = ["https://api.trongrid.io", "https://api.tronstack.io"]
+TRON_USDT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+TRON_TOKENS = {TRON_USDT: "USDT", "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8": "USDC", "TPYmHEhy5n8TCEfYGqW2rPxsghSfzghPDn": "USDD"}
+def _tron_addr(x):
+    if not x: return None
+    try: return addrutil.norm_tron(x)
+    except Exception: return x if isinstance(x, str) and x.startswith("T") else None
+async def _tron_get(path, params=None, ttl=TTL):
+    last = None
+    for base in TRON_API:
+        try:
+            return await get(f"{base}{path}", ttl=ttl, params=params or {})
+        except Exception as e:
+            last = e; WARN.append(f"tron {base.split('//')[1]} {path}: {type(e).__name__}")
+    raise Exception(last or "TRON APIs unavailable")
+def _tron_native_edges(tx):
+    """Extract native TRX TransferContract edges from a TronGrid transaction object."""
+    out = []; ts = (tx.get("block_timestamp") or 0) // 1000 or None; tid = tx.get("txID") or tx.get("tx_id")
+    ok = all((r.get("contractRet") == "SUCCESS") for r in (tx.get("ret") or [{"contractRet": "SUCCESS"}]))
+    if not ok: return out
+    for ct in (tx.get("raw_data") or {}).get("contract") or []:
+        if ct.get("type") != "TransferContract": continue
+        v = (ct.get("parameter") or {}).get("value") or {}
+        fr, to = _tron_addr(v.get("owner_address")), _tron_addr(v.get("to_address"))
+        amt = int(v.get("amount") or 0) / 1e6
+        if fr and to: out.append({"source": fr, "target": to, "amount": amt, "unit": "TRX", "tx": tid, "time": ts})
+    return out
+async def tron_page(a, cursor=None, kind="native", limit=50):
+    """kind=native -> /transactions; kind=trc20 -> /transactions/trc20. cursor is fingerprint."""
+    path = f"/v1/accounts/{a}/transactions" + ("/trc20" if kind == "trc20" else "")
+    params = {"limit": limit, "only_confirmed": "true"}
+    if cursor: params["fingerprint"] = cursor
+    d = await _tron_get(path, params, ttl=LONG if cursor else 600)
+    items = d.get("data") or []
+    nxt = (d.get("meta") or {}).get("fingerprint")
+    if not nxt and (d.get("meta") or {}).get("links", {}).get("next"):
+        from urllib.parse import urlparse, parse_qs
+        nxt = (parse_qs(urlparse(d["meta"]["links"]["next"]).query).get("fingerprint") or [None])[0]
+    if len(items) < limit: nxt = None
+    return items, nxt
+async def tron_address(a, cursor=None, f=None, to=None, pages=1, limit=40):
+    a = addrutil.norm_tron(a); out = {"chain": "tron", "address": a, "unit": "TRX"}; await ensure_prices()
+    cur = dec(cursor) or {"n": None, "t": None}
+    if not cursor:
+        try:
+            info = await _tron_get(f"/v1/accounts/{a}", ttl=120)
+            acc = (info.get("data") or [None])[0] or {}
+            out["balance"] = int(acc.get("balance") or 0) / 1e6
+            toks = []
+            for row in (acc.get("trc20") or []):
+                if isinstance(row, dict):
+                    for contract, bal in row.items():
+                        sym = TRON_TOKENS.get(contract, contract[:6] + "…")
+                        try: amt = int(bal) / (10 ** (6 if contract == TRON_USDT else 6))
+                        except Exception: amt = 0
+                        if amt: toks.append({"contract": contract, "symbol": sym, "amount": amt})
+            out["tokens"] = toks[:30]
+        except Exception as ex:
+            out["balance"] = None; out["warnings"] = [f"TRON account info unavailable: {type(ex).__name__}"]
+    edges, hist = [], []; t0 = time.time(); DEADLINE = float(os.environ.get("CHAINTRACE_TRON_DEADLINE", "18"))
+    for _ in range(max(1, pages)):
+        if time.time() - t0 > DEADLINE: out["partial"] = True; out.setdefault("warnings", []).append("TRON history truncated by time budget; use Load more"); break
+        # native + trc20 in parallel
+        async def _done(): return [], "done"
+        (n_items, n_nxt), (t_items, t_nxt) = await asyncio.gather(
+            tron_page(a, cur["n"], "native", limit) if cur["n"] != "done" else _done(),
+            tron_page(a, cur["t"], "trc20", limit) if cur["t"] != "done" else _done())
+        times = []
+        for tx in n_items:
+            for e in _tron_native_edges(tx):
+                times.append(e.get("time"))
+                if not _inrange(e.get("time"), f, to): continue
+                edges.append(e)
+                delta = e["amount"] if e["target"] == a else -e["amount"]
+                hist.append({"tx": e["tx"], "time": e["time"], "delta": delta, "unit": "TRX", "status": "ok", "method": "TransferContract"})
+        for t in t_items:
+            ts = (t.get("block_timestamp") or 0) // 1000 or None; times.append(ts)
+            if not _inrange(ts, f, to): continue
+            # TronGrid lists Approvals alongside Transfers; skip non-transfers (max-uint approvals blow up amounts)
+            typ = (t.get("type") or t.get("event_name") or "Transfer").lower()
+            if "approval" in typ or typ in ("approve",): continue
+            fr, too = _tron_addr(t.get("from")), _tron_addr(t.get("to"))
+            ti = t.get("token_info") or {}; contract = ti.get("address") or t.get("token_address")
+            try:
+                raw = int(t.get("value") or 0); decimals = int(ti.get("decimals") or 6)
+                # guard against approval leftovers / malformed values
+                if raw <= 0 or raw >= 10 ** (decimals + 30): continue
+                v = raw / 10 ** decimals
+            except Exception: continue
+            sym = ti.get("symbol") or TRON_TOKENS.get(contract, "TRC20")
+            fl = (["zero"] if not v else []) + (["spam"] if SPAMNAME.search(f"{ti.get('name') or ''} {sym}") else [])
+            if fr and too: edges.append({"source": fr, "target": too, "amount": v, "unit": sym, "tx": t.get("transaction_id") or t.get("transaction_hash"), "time": ts, "flags": fl,
+                                        **({"token": contract} if contract else {})})
+            hist.append({"tx": t.get("transaction_id") or t.get("transaction_hash"), "time": ts,
+                         "delta": v if too == a else -v, "unit": sym, "method": "trc20 transfer", "flags": fl})
+        cur = {"n": n_nxt or "done", "t": t_nxt or "done"}
+        if f and times and max(x for x in times if x) < f: cur = {"n": "done", "t": "done"}
+        if (cur["n"] == "done" and cur["t"] == "done") or hist: break
+    out["nodes"], out["edges"], out["txs"] = _finish_page("tron", a, edges, hist); out["cp"] = CP_LAST[0]
+    out["tx_count"] = "paged"; out["next"] = None if cur["n"] == "done" and cur["t"] == "done" else enc(cur)
+    return out
+async def tron_tx(h):
+    h = h[2:] if h.startswith("0x") else h
+    d = await _tron_get(f"/v1/transactions/{h}", ttl=LONG)
+    items = d.get("data") if isinstance(d, dict) else None
+    tx = (items[0] if items else d) if isinstance(d, dict) else None
+    if not tx or not (tx.get("txID") or tx.get("raw_data")):
+        # fallback: full-node wallet/gettransactionbyid
+        for base in TRON_API:
+            try:
+                r = await client.post(f"{base}/wallet/gettransactionbyid", json={"value": h}); r.raise_for_status(); tx = r.json(); break
+            except Exception: tx = None
+        if not tx: raise Exception("TRON transaction not found")
+    tid = "tx:" + (tx.get("txID") or h)
+    nodes = {tid: {"id": tid, "chain": "tron", "kind": "tx", "name": "tx " + (tx.get("txID") or h)[:10], "tags": [], "risk": 0}}; edges = []
+    for e in _tron_native_edges(tx if "raw_data" in tx else {"raw_data": tx.get("raw_data", tx), "txID": h, "ret": [{"contractRet": "SUCCESS"}], "block_timestamp": tx.get("block_timestamp")}):
+        edges.append({**e, "tx": h}); 
+        for k in ("source", "target"): nodes.setdefault(e[k], node("tron", e[k]))
+    # also pull TRC20 transfers for this tx if available
+    try:
+        info = await _tron_get(f"/v1/transactions/{h}/events", ttl=LONG)
+    except Exception: info = None
+    ts = (tx.get("block_timestamp") or 0) // 1000 or None
+    return {"chain": "tron", "tx": h, "time": ts, "unit": "TRX", "status": "ok",
+            "nodes": list(nodes.values()), "edges": edges}
+
+# ---------------- XRP Ledger (public rippled JSON-RPC) ----------------
+XRP_RPC = ["https://xrplcluster.com", "https://s2.ripple.com:51234", "https://s1.ripple.com:51234"]
+XRP_EPOCH = 946684800   # 2000-01-01 UTC
+async def xrp_rpc(method, params, ttl=None):
+    last = None
+    body = {"method": method, "params": [params]}
+    ttl = _ttl(ttl or (LONG if method in ("tx",) else TTL))
+    k = ("XRP", method, str(params))
+    if k in _cache and time.time() - _cache[k][0] < ttl: STATS["hit"] += 1; return _cache[k][1]
+    STATS["miss"] += 1
+    for url in XRP_RPC:
+        async with SEM["xrpl"]:
+            for i in range(3):
+                try:
+                    r = await client.post(url, json=body)
+                    if r.status_code == 429: await asyncio.sleep(1.5 * (i + 1)); continue
+                    r.raise_for_status(); j = r.json(); res = j.get("result") or {}
+                    if res.get("status") == "error" or res.get("error"):
+                        last = Exception(res.get("error_message") or res.get("error") or "xrpl error"); break
+                    _cache[k] = (time.time(), res); return res
+                except Exception as e:
+                    last = e; await asyncio.sleep(0.4 * (i + 1))
+        WARN.append(f"xrpl {url}: {type(last).__name__ if last else '?'}")
+    raise Exception(last or "XRPL RPCs unavailable")
+def _xrp_amount(amt):
+    """Return (value, unit, issuer_or_None). Native XRP is drops string; IOUs are {value,currency,issuer}."""
+    if isinstance(amt, str): return int(amt) / 1e6, "XRP", None
+    if isinstance(amt, dict):
+        cur = amt.get("currency") or "IOU"
+        if len(cur) == 40:  # hex currency code
+            try: cur = bytes.fromhex(cur).rstrip(b"\0").decode("ascii", "ignore") or cur[:6]
+            except Exception: cur = cur[:6] + "…"
+        try: v = float(amt.get("value") or 0)
+        except Exception: v = 0
+        return v, cur, amt.get("issuer")
+    return 0, "XRP", None
+def _xrp_tx_obj(t):
+    return t.get("tx") or t.get("tx_json") or t
+def _xrp_meta(t):
+    return t.get("meta") or t.get("metaData") or {}
+def _xrp_time(tx):
+    d = tx.get("date")
+    return (d + XRP_EPOCH) if isinstance(d, int) else None
+def _xrp_payment_edges(t):
+    tx = _xrp_tx_obj(t); meta = _xrp_meta(t)
+    if tx.get("TransactionType") != "Payment": return []
+    if meta.get("TransactionResult") not in (None, "tesSUCCESS"): return []
+    delivered = meta.get("delivered_amount") or meta.get("DeliveredAmount") or tx.get("Amount")
+    v, unit, issuer = _xrp_amount(delivered)
+    fr, to = tx.get("Account"), tx.get("Destination")
+    if not fr or not to: return []
+    e = {"source": fr, "target": to, "amount": v, "unit": unit, "tx": tx.get("hash"), "time": _xrp_time(tx)}
+    if tx.get("DestinationTag") is not None: e["destination_tag"] = tx["DestinationTag"]
+    if issuer: e["issuer"] = issuer
+    return [e]
+async def xrp_address(a, cursor=None, f=None, to=None, pages=1, limit=25):
+    if not addrutil.is_xrp_address(a): raise ValueError("not an XRP classic address")
+    out = {"chain": "xrp", "address": a, "unit": "XRP"}; await ensure_prices()
+    marker = dec(cursor)
+    if not cursor:
+        try:
+            info = await xrp_rpc("account_info", {"account": a, "ledger_index": "validated"}, ttl=120)
+            ad = info.get("account_data") or {}
+            out["balance"] = int(ad.get("Balance") or 0) / 1e6
+            out["tx_count"] = ad.get("Sequence")  # not total txs, but useful activity proxy
+            out["sequence"] = ad.get("Sequence")
+        except Exception as ex:
+            # account not found = unfunded / never activated
+            if "actNotFound" in str(ex) or "Account not found" in str(ex):
+                out["balance"] = 0; out["warnings"] = ["XRP account not found / unfunded"]
+            else:
+                out["balance"] = None; out["warnings"] = [f"XRPL account_info: {type(ex).__name__}: {ex}"]
+    edges, hist = [], []; t0 = time.time(); DEADLINE = float(os.environ.get("CHAINTRACE_XRP_DEADLINE", "18"))
+    for _ in range(max(1, pages)):
+        if time.time() - t0 > DEADLINE:
+            out["partial"] = True; out.setdefault("warnings", []).append("XRPL history truncated by time budget; use Load more"); break
+        params = {"account": a, "ledger_index_min": -1, "ledger_index_max": -1, "limit": limit, "forward": False}
+        if marker: params["marker"] = marker
+        res = await xrp_rpc("account_tx", params, ttl=LONG if marker else 600)
+        txs = res.get("transactions") or []; marker = res.get("marker")
+        stop = False
+        for t in txs:
+            for e in _xrp_payment_edges(t):
+                if to and e.get("time") and e["time"] > to: continue
+                if f and e.get("time") and e["time"] < f: stop = True; continue
+                edges.append(e)
+                delta = e["amount"] if e["target"] == a else -e["amount"]
+                h = {"tx": e["tx"], "time": e["time"], "delta": delta, "unit": e["unit"], "status": "ok", "method": "Payment"}
+                if e.get("destination_tag") is not None: h["destination_tag"] = e["destination_tag"]
+                if e.get("issuer"): h["issuer"] = e["issuer"]
+                hist.append(h)
+        if stop: marker = None
+        if not marker or hist: break
+    out["nodes"], out["edges"], out["txs"] = _finish_page("xrp", a, edges, hist); out["cp"] = CP_LAST[0]
+    # surface destination tags on aggregated edges that still carry them
+    out["next"] = enc(marker) if marker else None
+    return out
+async def xrp_tx(h):
+    h = h[2:] if h.startswith("0x") else h
+    res = await xrp_rpc("tx", {"transaction": h, "binary": False}, ttl=LONG)
+    if res.get("status") == "error" or not (res.get("hash") or res.get("tx_json") or res.get("TransactionType")):
+        raise Exception(res.get("error_message") or res.get("error") or "XRP transaction not found")
+    # modern rippled returns fields at top level; older wraps in tx_json
+    wrapped = {"tx": res if res.get("TransactionType") else res.get("tx_json"), "meta": res.get("meta") or res.get("metaData")}
+    if not wrapped["tx"]: wrapped["tx"] = res
+    tid = "tx:" + h
+    nodes = {tid: {"id": tid, "chain": "xrp", "kind": "tx", "name": "tx " + h[:10], "tags": [], "risk": 0}}; edges = []
+    for e in _xrp_payment_edges(wrapped):
+        edges.append({**e, "tx": h})
+        for k in ("source", "target"): nodes.setdefault(e[k], node("xrp", e[k]))
+        if e.get("issuer"): nodes.setdefault(e["issuer"], node("xrp", e["issuer"]))
+    return {"chain": "xrp", "tx": h, "time": _xrp_time(wrapped["tx"] or {}), "unit": "XRP",
+            "status": "ok" if (_xrp_meta(wrapped).get("TransactionResult") in (None, "tesSUCCESS")) else _xrp_meta(wrapped).get("TransactionResult"),
+            "nodes": list(nodes.values()), "edges": edges,
+            "destination_tag": (wrapped["tx"] or {}).get("DestinationTag")}
+
+# wire paginated fetchers (overrides any earlier ADDR stubs)
+ADDR = {"btc": btc_address, "eth": eth_address, "sol": sol_address, "tron": tron_address, "xrp": xrp_address}
+TX = {"btc": btc_tx, "eth": eth_tx, "sol": sol_tx, "tron": tron_tx, "xrp": xrp_tx}
