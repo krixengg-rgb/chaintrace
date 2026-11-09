@@ -22,7 +22,7 @@ const css=document.createElement('style');css.textContent=`
 .vpill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap}
 .vpill.sanctioned{background:#ff4d6d;color:#fff}.vpill.reported{background:rgba(255,159,67,.2);color:#ffb366;border:1px solid #ff9f43}.vpill.nomatch{background:rgba(46,229,157,.12);color:#2ee59d;border:1px solid #2ee59d55}.vpill.bad{background:rgba(255,255,255,.06);color:var(--mut)}
 #scrsum{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:12px}
-#cpp{max-width:100%;overflow-x:auto}@media(max-width:480px){#cpp .nm{max-width:84px}#cpp td{padding:5px 2px}}
+#cpp,#side .card{max-width:100%;overflow-x:auto}#side td{overflow-wrap:anywhere}@media(max-width:480px){#cpp .nm{max-width:84px}#cpp td{padding:5px 2px}}
 @media(max-width:700px){#scrm .card{padding:12px}#scrm thead{display:none}#scrm tr{display:block;border-top:1px solid var(--line);padding:6px 0}#scrm td{display:block;border:0;padding:2px 0}#scrm td.c{display:inline-block;margin-right:8px}}`;
 document.head.appendChild(css);
 // ---------- graph styling ----------
