@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 from fpdf import FPDF, FontFace
 from fpdf.enums import XPos, YPos
-import chains, labels, bridges
+import chains, labels, bridges, screen
 
 VERSION = "0.8.0"
 H = os.path.dirname(os.path.abspath(__file__))
@@ -346,7 +346,47 @@ async def build(p):
                 r = t.row(); r.cell(n.get("name") or "", style=BOLD); r.cell(n.get("kind") or "", style=FontFace(emphasis="B", color=RED)); r.cell(wrap_hex(cid(i)[1], 34), style=MONOS)
                 r.cell("–" if A["hops"](i) is None else str(A["hops"](i))); r.cell(", ".join(sorted({s.get("source") for s in n.get("sources") or [] if isinstance(s, dict)}))[:80])
     else: pdf.para("No high-risk categories (sanctioned, mixer, darknet, hack, scam, ransomware, gambling, blocklisted) appear in the graph.", size=8.5)
+    # sanctions + community reports: re-screened server-side against the lists loaded now (not trusting browser-side flags)
+    scr_s, scr_r = [], []
+    for i in nodes:
+        if is_tx(i) or (nodes.get(i) or {}).get("grp"): continue
+        c, a = A["chain_of"](i), cid(i)[1]
+        if c not in screen.SUPPORTED or not a: continue
+        for h in screen.sanctions(c, a): scr_s.append((i, c, a, h))
+        if not screen.sanctions(c, a):
+            try: rep = screen.community(c, a, labels.db_labels(c, a))
+            except Exception: rep = None
+            if rep: scr_r.append((i, c, a, rep))
+    pdf.h2("Sanctions and community-report screening")
+    L = screen.S["lists"]
+    pdf.para("Every address in the graph was screened when this report was generated against: " + "; ".join(
+        f"{x.get('short')} as of {x.get('as_of') or '?'} ({x.get('addresses')} digital-currency addresses)" for x in L.values()) + ". Sources are listed in Section 7.", size=7.6, color=GREY)
+    if scr_s:
+        pdf.box(f"{len({x[0] for x in scr_s})} address(es) in this graph exactly match an entry on an official sanctions list. "
+                "A match is on the exact address string published by the authority: confirm on the official list before any action.", color=RED, title="Sanctions list matches")
+        with pdf.tbl((46, 12, 38, 34, 20, 32), size=7) as t:
+            r = t.row(); [r.cell(x) for x in ("Address", "Chain", "List entry", "Programme / regime", "Designated", "Source")]
+            for i, c, a, h in scr_s[:60]:
+                r = t.row(); r.cell(wrap_hex(a, 30), style=MONOS); r.cell(code(c))
+                r.cell(f"{h['short']}: {h['entry']}" + (f" (ID {h['uid']})" if h['list'] == 'ofac' else f" (ref {h['uid']})"), style=FontFace(emphasis="B", color=RED))
+                r.cell(", ".join(h.get("programs") or [])[:120] or "–"); r.cell(h.get("designated") or "–"); r.cell(f"list as of {h.get('as_of')}\n{h.get('url') or ''}", style=FontFace(size_pt=6))
+        pdf.bullets([f"{cid(i)[1]} {h['wording']}." for i, c, a, h in scr_s[:20]], size=7.6)
+    else: pdf.para("No address in the graph matches the OFAC SDN list or the UK Sanctions List digital-currency addresses.", size=8.5)
+    if scr_r:
+        pdf.box("Community reports: unverified leads. These come from public scam/hack/phishing datasets"
+                + (" and Chainabuse" if any((x[3].get("chainabuse") or {}).get("count") for x in scr_r) else "")
+                + ". They are not verified by ChainTrace and are not evidence; corroborate before reliance.", color=AMBER, title="Community reports")
+        with pdf.tbl((50, 12, 12, 30, 78), size=7) as t:
+            r = t.row(); [r.cell(x) for x in ("Address", "Chain", "Reports", "Categories", "Sources")]
+            for i, c, a, rep in scr_r[:60]:
+                ca = rep.get("chainabuse") or {}
+                srcs = "; ".join(f"{d['source']}: {d.get('name') or d['category']}" for d in rep.get("datasets") or [])
+                if ca.get("count"): srcs += f"; Chainabuse: {ca['count']} report(s), e.g. " + ", ".join(f"{(x.get('created') or '')[:10]} {x.get('url')}" for x in (ca.get("reports") or [])[:2])
+                r = t.row(); r.cell(wrap_hex(a, 32), style=MONOS); r.cell(code(c)); r.cell(str(rep["count"])); r.cell(", ".join(rep.get("categories") or []))
+                r.cell(srcs[:300], style=LEADF)
     findings = []
+    if scr_s: findings.append(f"SANCTIONS: {len({x[0] for x in scr_s})} graph address(es) match official sanctions list entries: " + "; ".join(sorted({f"{h['short']} {h['entry']}" for _, _, _, h in scr_s}))[:300] + ". Confirm on the official list before any action.")
+    if scr_r: findings.append(f"{len(scr_r)} address(es) have community scam/hack reports (unverified leads, not evidence).")
     exch = [e for e in eps if e[1] == "exchange" and not e[5]]
     if exch: findings.append(f"Funds reached {len(exch)} attributed exchange/VASP endpoint(s): " + "; ".join(sorted({e[0] for e in exch if e[0]}))[:300] + ". A production order to the VASP can confirm account ownership.")
     hr = sorted({(r[2].get('kind'), r[2].get('name') or '') for r in risk})
@@ -482,6 +522,9 @@ async def build(p):
         "Solana: the public Solana JSON-RPC (getSignaturesForAddress / getTransaction), parsing native SOL and SPL token balance changes.",
         "Cross-chain: bridge indexers, all public and keyless: Wormholescan, deBridge DLN stats API, Mayan explorer API, Across API, THORChain/Maya Midgard, LayerZero Scan and Relay. THORChain/Maya inbound vault lists come from THORNode/MayaNode. EVM L2 public RPCs (Arbitrum, Optimism, Base, Polygon) are used for heuristic matching.",
         "Attribution datasets: OFAC SDN digital-currency addresses, GraphSense TagPacks, dawsbot/eth-labels, etherscan-labels, Forta labelled datasets, openlabels and Solana label aggregates, plus a ChainTrace curated seed list and allowlist. Each label records its dataset, licence and confidence (Section 5 and Appendix A).",
+        "Sanctions screening: digital-currency addresses from the US Treasury OFAC SDN list (official Advanced XML: entry name, programmes, designation date) and the UK Sanctions List (FCDO CSV; wallets parsed from the free-text field and kept only if they pass the chain checksum). A match is an exact-string match on the published address. "
+        + "; ".join(f"{x.get('short')} as of {x.get('as_of')}" for x in screen.S["lists"].values()) + ".",
+        "Community reports: scam / hack / phishing labels from public datasets (GraphSense, Forta, dawsbot, etherscan-labels, ScamSniffer) and, where an API key is configured, Chainabuse. These are unverified leads.",
         "Prices: CoinGecko (with Coinbase as fallback) for trace-time valuation, and Coinbase Exchange daily candles for historical USD in this report. Stablecoins are valued at par.",
     ], size=7.8)
     pdf.h2("How flows are derived")

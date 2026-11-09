@@ -272,6 +272,8 @@ def counterparties(chain, focus, agg, raw=None, limit=150):
     for x in out:
         x["usd"] = round(x["usd"], 2); n = node(chain, x["id"])
         x.update(name=n.get("name"), kind=n.get("kind"), risk=n.get("risk"))
+        if n.get("sanctions"): x["sanctions"] = [{k: h.get(k) for k in ("short", "entry", "uid", "as_of", "url", "wording")} for h in n["sanctions"]]
+        if n.get("reports"): x["reports"] = {"count": n["reports"]["count"], "categories": n["reports"]["categories"]}
     series = []
     for e in (raw or []):
         s_, t_ = (e["source"].lower(), e["target"].lower()) if chain == "eth" else (e["source"], e["target"])

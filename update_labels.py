@@ -23,6 +23,7 @@ FILES = {  # local name -> url
  "immike_solana_cex_labels.csv": f"{GH}/ImMike/crypto-wallet-address-labels/main/datasets/solana-wallet-and-program-labels/solana_cex_labels.csv",
  "immike_solana_defi_labels.csv": f"{GH}/ImMike/crypto-wallet-address-labels/main/datasets/solana-wallet-and-program-labels/solana_defi_labels.csv",
  "immike_BTC_ETH_BCH.json": f"{GH}/ImMike/crypto-wallet-address-labels/main/datasets/multi-chain-crypto-address-labels/BTC_ETH_BCH.json",
+ "scamsniffer_address.json": f"{GH}/scamsniffer/scam-database/main/blacklist/address.json",
  "../ofac_ETH.txt": f"{GH}/0xB10C/ofac-sanctioned-digital-currency-addresses/lists/sanctioned_addresses_ETH.txt",
  "../ofac_XBT.txt": f"{GH}/0xB10C/ofac-sanctioned-digital-currency-addresses/lists/sanctioned_addresses_XBT.txt",
  "../ofac_SOL.txt": f"{GH}/0xB10C/ofac-sanctioned-digital-currency-addresses/lists/sanctioned_addresses_SOL.txt",
@@ -37,6 +38,8 @@ SOURCES = {  # id -> (description, url, licence, default confidence, clear_licen
  "sol-forensic": ("Solana CEX/DeFi labels (ImMike aggregate of apostleoffinance/Solana-Forensic-Analysis-Tool; upstream Vybe/Dune/Flipside-derived)",
                   "https://github.com/ImMike/crypto-wallet-address-labels/tree/main/datasets/solana-wallet-and-program-labels", "MIT (repo); upstream API-derived, provenance caveat", 0.6, True),
  "jasontth": ("Jasontth/crypto_label via ImMike (BTC/ETH)", "https://github.com/Jasontth/crypto_label", "UNCLEAR (no licence upstream)", 0.6, False),
+ "scamsniffer": ("ScamSniffer scam-database address blacklist (wallet-drainer / phishing addresses; frozen upstream since Feb 2024)",
+                 "https://github.com/scamsniffer/scam-database", "GPL-3.0", 0.7, True),
  "allowlist": ("ChainTrace allowlist of major tokens / protocol infra (overrides risk labels)", "update_labels.py", "own work", 0.99, True),
  "builtin": ("ChainTrace hand-curated seed list", "local labels.py", "own work", 0.8, True),
  "xrpscan": ("XRPScan well-known accounts (via labels.py seed)", "https://api.xrpscan.com/api/v1/names/well-known", "public API labels", 0.85, True),
@@ -180,6 +183,11 @@ def build(include_unclear=False):
     for r in csv.DictReader(open(os.path.join(SRC, "forta_malicious_smart_contracts.csv"))):
         add("eth", r["contract_address"], "hack", r["contract_tag"] or "malicious contract", "forta", entity="malicious contract")
         if r.get("contract_creator"): add("eth", r["contract_creator"], "hack", r["contract_creator_tag"] or "malicious contract deployer", "forta", conf=0.7)
+    # ScamSniffer (EVM addresses reported as drainer / phishing operators)
+    try:
+        for a in json.load(open(os.path.join(SRC, "scamsniffer_address.json"))):
+            if isinstance(a, str): add("eth", a, "scam", "ScamSniffer blacklist (phishing / drainer)", "scamsniffer", entity="ScamSniffer blacklist")
+    except FileNotFoundError: pass
     # openlabels first party
     try:
         for t in (yaml.load(open(os.path.join(SRC, "oli_firstparty.yaml")), Loader=YL).get("tags") or []):

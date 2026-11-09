@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     region: frankfurt
-    buildCommand: pip install -r requirements.txt && python3 update_labels.py --cleanup
+    buildCommand: pip install -r requirements.txt && (python3 update_sanctions.py || echo 'sanctions list refresh failed: using the shipped baseline') && python3 update_labels.py --cleanup
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /healthz
     envVars:

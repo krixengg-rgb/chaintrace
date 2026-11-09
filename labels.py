@@ -58,7 +58,7 @@ HACK = {
  "eth": {}, "btc": {}, "sol": {},
 }
 def norm(chain, a): return a.lower() if chain == "eth" else a
-import sqlite3, threading
+import sqlite3, threading, screen
 LDB = os.path.join(D, "labels.sqlite")
 RISK = {"sanctioned": 100, "terrorism": 95, "darknet": 85, "ransomware": 85, "hack": 80, "scam": 75, "mixer": 75, "blocklisted": 50,
         "gambling": 35, "exchange": 10, "bridge": 5, "defi": 3, "miner": 0, "other": 0}
@@ -79,6 +79,29 @@ def label(chain, a, extra_tags=None):
     k = norm(chain, a)
     if k in ("0x0000000000000000000000000000000000000000", "11111111111111111111111111111111"): return {"name": "null/system", "kind": None, "tags": [], "risk": 0, "sources": []}
     rows = db_labels(chain, a)
+    return screen_decorate(chain, a, _label_rows(chain, a, rows, extra_tags), rows)
+def screen_decorate(chain, a, res, rows):
+    """official sanctions-list hits = hard flag (kind sanctioned, risk 100); dataset scam/hack labels + Chainabuse = community-report leads"""
+    hits = screen.sanctions(chain, a)
+    if hits:
+        h = hits[0]; res["sanctions"] = hits; res["kind"] = "sanctioned"; res["risk"] = 100
+        res["tags"] = sorted(set(res.get("tags") or []) | {"sanctioned"})
+        tag = " / ".join(dict.fromkeys(x["short"] for x in hits))
+        nm = res.get("name")
+        if not nm or nm == "OFAC SDN listed" or nm.endswith("(OFAC SDN)"): nm = f"{h['entry']} ({tag})"
+        elif h["entry"] and h["entry"].lower() not in nm.lower(): nm = f"{nm} · {h['entry']} ({tag})"
+        res["name"] = nm
+        res["sources"] = [{"source": x["list"] + "-list", "name": x["entry"], "category": "sanctioned", "licence": x["licence"], "source_url": x["url"], "confidence": 1.0}
+                          for x in hits] + [s for s in (res.get("sources") or []) if s.get("source") != "ofac"]
+    elif res.get("kind") == "sanctioned" and screen.loaded():
+        # a dataset says 'sanctioned' but the current official lists do not (e.g. delisted, or a third-party tag): keep it, but not as a hard flag
+        res["kind"] = "blocklisted"; res["risk"] = RISK["blocklisted"]
+        res["tags"] = sorted(set(res.get("tags") or []) | {"not on current sanctions lists"})
+        res["unlisted_note"] = "Tagged sanctioned by a third-party dataset but not on the current OFAC SDN / UK Sanctions List: possibly delisted. Check the official list."
+    rep = screen.community(chain, a, rows)
+    if rep: res["reports"] = rep
+    return res
+def _label_rows(chain, a, rows, extra_tags=None):
     old = _label_v1(chain, a, extra_tags)
     if not rows: return {**old, "sources": [{"source": "blockscout", "name": t, "licence": "Blockscout public API tags", "confidence": 0.6} for t in (extra_tags or [])][:4]}
     best = max(rows, key=lambda r: (RISK.get(r["category"], 0), r["confidence"]))
@@ -108,15 +131,23 @@ def _label_v1(chain, a, extra_tags=None):
         if not name and t not in ("exchange","HOT WALLET","Exchange","Token Contract"): name = t
     base = {"sanctioned":100,"mixer":75,"hack":80,"exchange":10}.get(kind, 0)
     return {"name": name, "kind": kind, "tags": sorted(set(tags + (extra_tags or []))), "risk": base}
+REPORT_RISK = 30   # community reports alone (no dataset category): an amber lead, well below a sanctions match
 def score(own, neighbors):
-    """own risk + exposure from direct counterparties."""
-    exp = 0; reasons = []
+    """own risk + exposure from direct counterparties. Official sanctions matches are listed first with the list wording."""
+    exp = 0; reasons = []; sanc = []
+    for x in own.get("sanctions") or []: sanc.append("⛔ address " + x["wording"])
     for n in neighbors:
+        for x in (n.get("sanctions") or [])[:1]: sanc.append(f"⛔ direct counterparty {short_id(n['id'])} {x['wording']}")
         if n.get("kind") in EXPO:
             exp = max(exp, EXPO[n["kind"]]); reasons.append(f"direct exposure to {n['kind']} {n.get('name') or n['id'][:12]}")
-    s = min(100, max(own["risk"], exp + (10 if own["kind"] == "exchange" else 0)))
+    rep = own.get("reports") or {}
+    s = min(100, max(own["risk"], exp + (10 if own["kind"] == "exchange" else 0), REPORT_RISK if rep.get("count") else 0))
+    if rep.get("count"): reasons.append(f"{rep['count']} community report(s) ({', '.join(rep.get('categories') or [])}): unverified leads, not evidence")
+    if own.get("unlisted_note"): reasons.append(own["unlisted_note"])
     if own.get("kind") in EXPO or own.get("kind") in ("exchange","bridge","defi"):
         src = ", ".join(sorted({x["source"] for x in own.get("sources", [])})) or "label db"
         reasons.insert(0, f"address labelled {own['kind']} ({own.get('name') or ''}; source: {src})")
+    if sanc: s = max(s, 100 if own.get("sanctions") else EXPO["sanctioned"])
     lvl = "severe" if s >= 75 else "high" if s >= 45 else "medium" if s >= 20 else "low"
-    return {"score": s, "level": lvl, "reasons": list(dict.fromkeys(reasons))[:8]}
+    return {"score": s, "level": lvl, "reasons": list(dict.fromkeys(sanc[:4] + reasons))[:10], "sanctioned": bool(own.get("sanctions")), "sanctioned_exposure": len(sanc)}
+def short_id(i): return i if len(i) <= 16 else i[:8] + "…" + i[-4:]

@@ -29,6 +29,8 @@ def enrich(chain, a, cache):
     cache[a] = {"id": a, "name": n.get("name"), "kind": n.get("kind"), "risk": n.get("risk") or 0, "source": src,
                 "suggested": ({k: n["suggested"].get(k) for k in ("label", "entity", "confidence", "method")} if n.get("suggested") else None)}
     cache[a]["cat"] = cat_of({**n, "suggested": n.get("suggested")})
+    if n.get("sanctions"): cache[a]["sanctions"] = [{k: h.get(k) for k in ("short", "entry", "uid", "as_of", "url", "wording")} for h in n["sanctions"]]
+    if n.get("reports"): cache[a]["reports"] = {"count": n["reports"]["count"], "categories": n["reports"]["categories"]}
     return cache[a]
 def norm_rules(r):
     r = {**DEFAULT_RULES, **(r or {})}
@@ -98,7 +100,9 @@ async def check_one(item, cap=16.0):
         fired = []
         if rules["any_tx"]: fired.append("new transaction")
         if rules["out_usd"] and out_usd >= rules["out_usd"]: fired.append(f"outflow ≥ ${rules['out_usd']:,.0f}")
-        for x in flagged[:3]: fired.append(f"{'to' if x['dir'] == 'out' else 'from'} {x['cat']}: {x['name'] or x['id'][:10]}")
+        for x in flagged[:3]:
+            if x.get("sanctions"): fired.append(f"⛔ {'to' if x['dir'] == 'out' else 'from'} sanctioned address {x['id'][:10]}…: {x['sanctions'][0]['wording']}")
+            else: fired.append(f"{'to' if x['dir'] == 'out' else 'from'} {x['cat']}: {x['name'] or x['id'][:10]}")
         if not fired: continue
         sev = "high" if any(x["cat"] in ("sanctioned", "mixer", "risky") for x in flagged) else \
               "medium" if (flagged or (rules["out_usd"] and out_usd >= rules["out_usd"])) else "low"

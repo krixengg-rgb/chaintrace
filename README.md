@@ -7,6 +7,14 @@ Render: `render.yaml` blueprint. The label DB (~200 MB) is not in git; it is bui
 (`update_labels.py`; unclear-licence sources excluded). Set `CHAINTRACE_USER` / `CHAINTRACE_PASSWORD` in the Render dashboard.
 The free tier disk is ephemeral: the HTTP cache and in-memory trace jobs reset on restart/sleep.
 
+## Sanctions screening and community reports (v11)
+Every address ChainTrace shows is screened against official sanctions lists and community scam reports.
+- **Sanctions (hard flag, red):** digital-currency addresses from the US Treasury **OFAC SDN list** (official Advanced XML: entry name, ID, programmes, designation date) and the **UK Sanctions List** (FCDO CSV, which replaced the OFSI Consolidated List on 28 Jan 2026; wallets are parsed from the free-text field and kept only if they pass the chain checksum). Built by `update_sanctions.py` into `data/sanctions.json` (shipped baseline, refreshed on deploy and, when older than a day, in a nice'd subprocess at runtime; ~30 MB peak RAM). A match sets the node to *sanctioned* (risk 100), adds a red ⛔ badge, and is listed in the side panel, counterparties panel, risk reasons, AutoTrace (branch stops, root warning), watchlist alerts and the PDF report with the wording "matches OFAC SDN list entry X (as of date): confirm before action". Third-party "sanctioned" tags that are not on the current lists are downgraded to *blocklisted* with a "possibly delisted" note.
+- **Community reports (amber, unverified leads):** scam / hack / phishing labels from GraphSense, Forta, dawsbot, etherscan-labels and the ScamSniffer address blacklist (GPL-3.0, frozen upstream since Feb 2024), plus **Chainabuse** when `CHAINABUSE_API_KEY` is set. Free Chainabuse keys allow about 10 calls a month, so calls are only made when you press "Check Chainabuse" (cached 7 days; budget via `CHAINABUSE_MONTHLY_LIMIT`). Without a key every address gets a "Search Chainabuse" link.
+- **API:** `GET /api/screen?addr=…[&chain=…][&chainabuse=1]`, `POST /api/screen/batch` with `{"addresses":[…]}` or `{"text":"pasted list"}` (max 500, local lists only), `GET /api/screen/status`.
+- **UI:** 🛡 Screen (paste a list, get a table, download CSV; deep link `?screen=addr1,addr2`), ⛔ graph button (count + "flagged only" filter).
+- Test: `LP=… python3 uitest_screen.py` (CT_URL for another server).
+
 ## Investigation tools (v6)
 - **Counterparties panel**: the top inflow/outflow counterparties of the selected address ranked by USD, with amount, tx count, first/last seen and label or suggested-deposit badges. It has filters for direction, token, min USD and dates, a √-scaled in/out volume histogram, and buttons to add one row or the top N to the graph. More pages come from `GET /api/counterparties?q=&pages=1..5&cursor=` (18 s budget).
 - **Direction colouring**: flows into the selected node (or the root) are green and flows out are red. Toggle it with "⇄ In/Out".

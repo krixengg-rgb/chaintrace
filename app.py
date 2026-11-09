@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-import asyncio, chains, labels, os, trace, autotrace, deposits, bridges, watch
+import asyncio, chains, labels, os, trace, autotrace, deposits, bridges, watch, screen
 app = FastAPI(title="ChainTrace")
 # ---- auth + rate limiting (public exposure) ----
 import secrets, base64, time as _t, collections
@@ -71,12 +71,17 @@ def finish(d):
     d["price_usd"] = chains.PRICE.get((d.get("unit") or "").upper())
     return d
 _WARM = {}
+_BOOT = _t.time()
 @app.on_event("startup")
 async def _warm_up():
     """off the request path: build the inferred-label store and touch the label DB in worker threads, fetch prices"""
     _WARM["dep"] = asyncio.create_task(asyncio.to_thread(deposits.ensure_store))
     _WARM["lbl"] = asyncio.create_task(asyncio.to_thread(lambda: labels.label("eth", "0x28C6c06298d514Db089934071355E5743bf21d60")))
     asyncio.create_task(chains.ensure_prices())
+    async def _sanc_refresh():   # stale (>24h) sanctions list: rebuild from the official files in a nice'd subprocess, after the warm-up settles
+        await asyncio.sleep(int(os.environ.get("CHAINTRACE_SANCTIONS_DELAY", "90")))
+        await screen.refresh_if_stale()
+    if os.environ.get("CHAINTRACE_SANCTIONS_REFRESH", "1") != "0": asyncio.create_task(_sanc_refresh())
 async def _warm_wait(cap=1.0):
     """give a cold-start warm-up at most ~1s; never hold a lookup hostage to the store build (soft deadline is 4s)"""
     pend = [t for t in _WARM.values() if not t.done()]
@@ -89,6 +94,7 @@ app.add_middleware(GZipMiddleware, minimum_size=2000)   # 50-75 KB lookup JSON -
 @app.get("/api/lookup")
 async def lookup(q: str, chain: str | None = None, cursor: str | None = None, date_from: int | None = None, date_to: int | None = None):
     if _t.time() - bridges._vts[0] > 3600: asyncio.create_task(bridges.refresh_vaults())
+    if screen.stale() and not screen.S["refreshing"] and os.environ.get("CHAINTRACE_SANCTIONS_REFRESH", "1") != "0" and _t.time() - _BOOT > 120: asyncio.create_task(screen.refresh_if_stale())
     c, kind = chains.detect(q)
     if chain and chain in chains.ADDR:
         if kind == "tx" or (not c):
@@ -218,6 +224,62 @@ async def make_report(request: Request):
     return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="ChainTrace-report-{name}.pdf"',
         "X-Report-SHA256": info["pdf_sha256"], "X-Case-SHA256": info["case_sha256"], "X-Report-Pages": str(info["pages"]),
         "Access-Control-Expose-Headers": "X-Report-SHA256, X-Case-SHA256, X-Report-Pages"})
+# ---------------- screening: sanctions lists (hard flag) + community reports (unverified leads) ----------------
+SCREEN_MAX = 500
+def _screen_one(raw, chain=None):
+    a = (raw or "").strip().strip(",;'\"")
+    c, kind = chains.detect(a)
+    if chain in chains.ADDR and kind != "tx": c = chain
+    row = {"input": raw, "address": a, "chain": c, "valid": bool(c and kind == "address")}
+    if not a: return None
+    if c and kind == "address":
+        lab = labels.label(c, a)
+        row.update(name=lab.get("name"), kind=lab.get("kind"), sanctions=lab.get("sanctions") or [], reports=lab.get("reports"),
+                   unlisted_note=lab.get("unlisted_note"))
+    else:
+        row.update(sanctions=screen.sanctions_any(a), reports=None, kind=None, name=None)   # e.g. LTC / XMR / BCH on the lists
+        if row["sanctions"]: row["chain"] = row["sanctions"][0].get("chain"); row["valid"] = True
+    if not row["sanctions"] and row["valid"]:
+        oth = [h for h in screen.sanctions_any(a) if h.get("chain") != c]   # same string listed under another asset (e.g. a BCH/LTC-listed 1… address)
+        for h in oth: h["wording"] = h["wording"].replace(": confirm before action", f"; listed as a {h.get('asset') or h.get('chain', '').upper()} address: confirm before action")
+        row["sanctions"] = oth
+    row["verdict"] = "sanctioned" if row["sanctions"] else "reported" if (row.get("reports") or {}).get("count") else ("no match" if row["valid"] else "not an address")
+    row["wording"] = row["sanctions"][0]["wording"] if row["sanctions"] else ("community reports: unverified leads, not evidence" if row["verdict"] == "reported" else None)
+    row["chainabuse_url"] = screen.ca_search_url(a) if row["valid"] else None
+    return row
+def _lists_meta():
+    st = screen.status()
+    return {"lists": st["lists"], "generated": st["generated"], "stale": st["stale"], "counts": st["counts"], "chainabuse_api": st["chainabuse"]}
+@app.get("/api/screen")
+async def screen_one(addr: str, chain: str | None = None, chainabuse: bool = False):
+    """screen one address against the OFAC SDN + UK Sanctions List digital-currency addresses and community scam reports.
+    chainabuse=1 makes one live Chainabuse API call (cached 7 days; needs CHAINABUSE_API_KEY; free keys allow ~10 calls a month)."""
+    if len(addr) > 120: raise HTTPException(400, "address too long")
+    row = _screen_one(addr, chain)
+    if not row: raise HTTPException(400, "give an address")
+    if row["valid"] and row["chain"] in chains.ADDR:
+        ca = await screen.chainabuse(row["chain"], row["address"], call=chainabuse)
+        row["chainabuse"] = ca
+        if ca.get("status") in ("ok", "cached") and ca.get("count"):
+            row["reports"] = screen.community(row["chain"], row["address"], labels.db_labels(row["chain"], row["address"]))
+            if row["verdict"] == "no match": row["verdict"] = "reported"; row["wording"] = "community reports: unverified leads, not evidence"
+    return {**row, **_lists_meta()}
+@app.post("/api/screen/batch")
+async def screen_batch(request: Request):
+    """{"addresses": [...]} or {"text": "pasted list"} -> one row per address (local lists only; no Chainabuse calls)"""
+    try: p = await request.json()
+    except Exception: raise HTTPException(400, "body must be JSON")
+    import re as _re
+    items = p.get("addresses") if isinstance(p, dict) else None
+    if not items and isinstance(p, dict) and isinstance(p.get("text"), str): items = [x for x in _re.split(r"[\s,;]+", p["text"]) if x.strip()]
+    if not isinstance(items, list) or not items: raise HTTPException(400, 'expected {"addresses": [...]} or {"text": "..."}')
+    items = list(dict.fromkeys(str(x).strip() for x in items if str(x).strip()))
+    if len(items) > SCREEN_MAX: raise HTTPException(413, f"max {SCREEN_MAX} addresses per batch")
+    rows = await asyncio.to_thread(lambda: [r for r in (_screen_one(x) for x in items) if r])
+    summ = {k: sum(1 for r in rows if r["verdict"] == k) for k in ("sanctioned", "reported", "no match", "not an address")}
+    return {"rows": rows, "summary": summ, "screened_at": int(_t.time()), **_lists_meta()}
+@app.get("/api/screen/status")
+def screen_status(): return screen.status()
 @app.get("/api/bridges")
 def bridges_supported(): return {"supported": bridges.SUPPORTED}
 @app.get("/api/prices")

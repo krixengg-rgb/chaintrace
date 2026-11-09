@@ -135,7 +135,8 @@ function hist(o){const fr=F.from?Date.parse(F.from)/1000:0,to=F.to?Date.parse(F.
   if(b)g+=`<rect x="${i*bw+.5}" y="36" width="${bw-1}" height="${b}" fill="#ff6b81"><title>${tt}: out ${useUsd?usd(O[i]):O[i]+' transfers'}</title></rect>`}
  return`<svg viewBox="0 0 300 70" preserveAspectRatio="none"><line x1="0" y1="35.5" x2="300" y2="35.5" stroke="rgba(255,255,255,.15)"/>${g}</svg>
  <div class="meta" style="display:flex"><span>${lab(t0)}</span><span class="sp" style="flex:1;text-align:center">${useUsd?'USD (√ scale)':'transfers'} · <span class="in">▲ in</span> <span class="out">▼ out</span> · ${s.length} flows</span><span>${lab(t1)}</span></div>`}
-function badge(x){return x.kind?tagH(x.kind):x.suggested?`<span class="tag sg" title="${esc(x.suggested.method||'')}">≈ ${esc(x.suggested.label)} ${Math.floor((x.suggested.confidence||0)*100)}%</span>`:''}
+function badge(x){return (x.sanctions&&x.sanctions.length?`<span class="tag sdn" title="${esc(x.sanctions[0].wording||'')}">⛔ ${[...new Set(x.sanctions.map(h=>(h.short||'').startsWith('UK')?'UK':'SDN'))].join('/')}</span>`:'')+(x.reports&&x.reports.count?`<span class="tag rep" title="community reports: unverified leads">⚑ ${x.reports.count}</span>`:'')+badge0(x)}
+function badge0(x){return x.kind?tagH(x.kind):x.suggested?`<span class="tag sg" title="${esc(x.suggested.method||'')}">≈ ${esc(x.suggested.label)} ${Math.floor((x.suggested.confidence||0)*100)}%</span>`:''}
 function cpRender(){let el=$('cpp');if(!el||!el.isConnected){el=el||document.createElement('div');el.id='cpp';const f=$('side').querySelector('.card');f?f.after(el):$('side').appendChild(el)}
  const o=CPS[CPV];if(!CPV){el.innerHTML='';return}
  const head=`<h3>⇆ Counterparties<span class="sp"></span><span class="dim" style="text-transform:none;letter-spacing:0">${esc(short(CPV))}${o?' · '+o.pages+' page(s)':''}</span></h3>`;
@@ -159,7 +160,7 @@ function cpRender(){let el=$('cpp');if(!el||!el.isConnected){el=el||document.cre
  <div class="meta" style="margin-top:6px">Ranked by USD at transfer-time prices where known. Based on ${o.pages} history page(s); series ≤3000 most recent transfers.</div></div>`;
  el._rows=shown}
 function cpAdd(xs){const o=CPS[CPV];if(!o||!xs.length)return 0;const nodes=[],edges=[];if(!inG(CPV))nodes.push({id:CPV,chain:o.chain});
- for(const x of xs){nodes.push({id:x.id,chain:o.chain,name:x.name||null,kind:x.kind||null,risk:x.risk||0,suggested:x.suggested||undefined});
+ for(const x of xs){nodes.push({id:x.id,chain:o.chain,name:x.name||null,kind:x.kind||null,risk:x.risk||0,suggested:x.suggested||undefined,sanctions:x.sanctions||undefined,reports:x.reports||undefined});
   for(const[u,a]of Object.entries(x.units)){if(F.tok&&u!==F.tok)continue;const e={source:x.dir==='in'?x.id:CPV,target:x.dir==='in'?CPV:x.id,amount:a,unit:u,usd:(x.uusd||{})[u]||null,count:(x.ucount||{})[u]||x.count,first:x.first,last:x.last,flags:x.flags};
    if(e.usd==null&&Object.keys(x.units).length===1)e.usd=x.usd||null;edges.push(e)}}
  const before=cy.nodes().length;add({nodes,edges,unit:''},null);cpRender();return cy.nodes().length-before}

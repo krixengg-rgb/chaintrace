@@ -45,6 +45,7 @@ async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, s
             if direction == "forward" and e["source"] == root: take(root, e, e["target"], 1, frontier, lab)
             if direction == "backward" and e["target"] == root: take(root, e, e["source"], 1, frontier, lab)
     parent[root] = None; depth_of[root] = 0; J["root"] = root; seen = set()
+    if (nodes.get(root) or {}).get("sanctions"): J["warnings"] = [f"⛔ The starting address {nodes[root]['sanctions'][0]['wording']}. Tracing continues for intelligence purposes."]
     async def fetch(a):
         if a in cache: return cache.pop(a)
         async with sems.get(ch(a), sems["eth"]):
@@ -126,6 +127,13 @@ async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, s
         if p["kind"] in EXPO: score = max(score, int(EXPO[p["kind"]] * 0.75 ** (p["hops"] - 1)))
         reasons.append(f"{direction} {p['hops']} hop(s) to {p['kind']} {p.get('name') or p['target'][:12]} [{p['sources']}]: " + " → ".join(_sh(x) for x in p["nodes"]))
     lvl = "severe" if score >= 75 else "high" if score >= 45 else "medium" if score >= 20 else "low"
+    sanc = [{"id": nid, "name": n.get("name"), "hops": depth_of.get(nid), "wording": n["sanctions"][0]["wording"], "lists": sorted({h["short"] for h in n["sanctions"]})}
+            for nid, n in nodes.items() if n.get("sanctions")]
+    if sanc:
+        score = max(score, 100 if (nodes.get(root) or {}).get("sanctions") else EXPO["sanctioned"])
+        reasons = [f"⛔ {'root' if x['id'] == root else 'branch stopped at'} {x['id'][:12]}… {x['wording']}" for x in sanc[:4]] + reasons
+        lvl = "severe" if score >= 75 else "high" if score >= 45 else "medium" if score >= 20 else "low"
+    J["sanctions"] = sanc
     J.update(nodes=list(nodes.values()), edges=list(edges.values()), paths=paths, endpoints=endpoints[:50], unresolved=len(leaves),
              stop_reason=stop, risk={"score": score, "level": lvl, "reasons": reasons[:12]}, status="done",
              progress=f"done · {len(endpoints)} endpoint(s) · {stop}", elapsed=round(time.time() - t0, 1))

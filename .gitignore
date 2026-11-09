@@ -17,3 +17,5 @@ data/depwork/
 data/watchlist.json
 data/watch_state.json
 data/watch_events.jsonl
+chaintrace-chainabuse.sqlite
+chaintrace-sanctions.json
