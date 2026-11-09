@@ -33,7 +33,7 @@ class _C:
 _cache = _C()
 TTL = 300
 LONG = 30 * 86400   # immutable data (old pages, confirmed txs)
-SEM = {"mempool.space": asyncio.Semaphore(3), "blockscout": asyncio.Semaphore(4), "solana": asyncio.Semaphore(1), "trongrid": asyncio.Semaphore(3), "xrpl": asyncio.Semaphore(2), "other": asyncio.Semaphore(4)}
+SEM = {"mempool.space": asyncio.Semaphore(3), "blockscout": asyncio.Semaphore(6), "solana": asyncio.Semaphore(1), "trongrid": asyncio.Semaphore(3), "xrpl": asyncio.Semaphore(2), "other": asyncio.Semaphore(4)}
 def _sem(u):
     if u.startswith(os.environ.get("CHAINTRACE_BS", "https://eth.blockscout.com")): return SEM["blockscout"]   # stalled Blockscout never starves RPC
     if "trongrid.io" in u or "tronstack.io" in u: return SEM["trongrid"]
@@ -51,22 +51,28 @@ client = httpx.AsyncClient(timeout=httpx.Timeout(15, connect=6), headers={"User-
 # ---- USD prices (CoinGecko free simple-price, cached 10 min) ----
 PRICE = {"USDT": 1.0, "USDC": 1.0, "DAI": 1.0, "USDS": 1.0, "PYUSD": 1.0, "FDUSD": 1.0, "TUSD": 1.0, "USDE": 1.0}
 _price_ts = [0.0]
+_price_task = [None]; _cg_fail = [0.0]
+def _set_prices(b, e, s_, trx, xrp):
+    PRICE.update({"BTC": b, "WBTC": b, "ETH": e, "WETH": e, "STETH": e, "SOL": s_, "WSOL": s_, "TRX": trx, "XRP": xrp})
+async def _refresh_prices():
+    ex = "skipped (failed <1h ago)"
+    if time.time() - _cg_fail[0] > 3600:
+        try:
+            d = await asyncio.wait_for(get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,tron,ripple&vs_currencies=usd", ttl=600), 4)
+            _set_prices(d["bitcoin"]["usd"], d["ethereum"]["usd"], d["solana"]["usd"], d["tron"]["usd"], d["ripple"]["usd"]); _price_ts[0] = time.time(); return
+        except Exception as e: ex = e; _cg_fail[0] = time.time()   # CoinGecko often 403/429s shared cloud IPs such as Render
+    try:   # fallback: Coinbase spot
+        syms = ("BTC", "ETH", "SOL", "TRX", "XRP")
+        r = await asyncio.wait_for(asyncio.gather(*[get(f"https://api.coinbase.com/v2/prices/{c}-USD/spot", ttl=600) for c in syms]), 5)
+        _set_prices(*(float(x["data"]["amount"]) for x in r)); _price_ts[0] = time.time()
+    except Exception as ex2:
+        print("price fetch failed:", ex, "| fallback:", ex2); _price_ts[0] = time.time() - 540   # retry in ~1 min
 async def ensure_prices():
+    """USD prices, refreshed every 10 min; concurrent callers share one in-flight refresh"""
     if time.time() - _price_ts[0] < 600: return PRICE
-    _price_ts[0] = time.time()
-    try:
-        d = await asyncio.wait_for(get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,tron,ripple&vs_currencies=usd", ttl=600), 4)
-        b, e, s = d["bitcoin"]["usd"], d["ethereum"]["usd"], d["solana"]["usd"]
-        PRICE.update({"BTC": b, "WBTC": b, "ETH": e, "WETH": e, "STETH": e, "SOL": s, "WSOL": s,
-                      "TRX": d["tron"]["usd"], "XRP": d["ripple"]["usd"]})
-    except Exception as ex:
-        try:   # fallback: Coinbase spot (CoinGecko often 429s shared cloud IPs such as Render)
-            syms = ("BTC", "ETH", "SOL", "TRX", "XRP")
-            r = await asyncio.wait_for(asyncio.gather(*[get(f"https://api.coinbase.com/v2/prices/{c}-USD/spot", ttl=600) for c in syms]), 5)
-            b, e, s, trx, xrp = (float(x["data"]["amount"]) for x in r)
-            PRICE.update({"BTC": b, "WBTC": b, "ETH": e, "WETH": e, "STETH": e, "SOL": s, "WSOL": s, "TRX": trx, "XRP": xrp})
-        except Exception as ex2:
-            print("price fetch failed:", ex, "| fallback:", ex2); _price_ts[0] = time.time() - 540   # retry in ~1 min
+    if _price_task[0] is None or _price_task[0].done(): _price_task[0] = asyncio.create_task(_refresh_prices())
+    try: await asyncio.shield(_price_task[0])
+    except Exception: pass
     return PRICE
 def usd_of(amount, unit, rate=None):
     p = rate or PRICE.get((unit or "").upper())
@@ -420,10 +426,40 @@ async def btc_address(a, cursor=None, f=None, to=None, pages=1):
 BS_TIMEOUT = float(os.environ.get("CHAINTRACE_BS_TIMEOUT", "9"))      # hard per-call cap for Blockscout info/counters/tx
 BS_STREAM_TIMEOUT = float(os.environ.get("CHAINTRACE_BS_STREAM_TIMEOUT", "11"))   # history streams (token-transfers is often ~9s)
 ETH_RPCS = [ETH_RPC, "https://eth.drpc.org", "https://cloudflare-eth.com"]   # free, keyless public RPCs (raced)
+FAST = contextvars.ContextVar("fast", default=False)   # set by /api/lookup (interactive); traces/scans keep full waits
+SOFT = float(os.environ.get("CHAINTRACE_ETH_SOFT", "4"))    # interactive soft deadline for Blockscout history streams
+HEDGE = float(os.environ.get("CHAINTRACE_ETH_HEDGE", "2.5"))  # start the Ethplorer hedge after this many seconds
 ETHPLORER = "https://api.ethplorer.io"                                 # documented public 'freekey' (no signup), fallback only
 async def _cap(coro, t):
     try: return await asyncio.wait_for(coro, t), None
     except Exception as ex: return None, type(ex).__name__ or "error"
+INFLIGHT = {}   # (url, kw) -> task; joins duplicate in-flight fetches (e.g. the client's auto-refresh)
+def _bg_get(url, cap, ttl=TTL, **kw):
+    """start (or join) a capped GET as a background task; awaiting it with asyncio.wait never cancels it,
+    so a slow indexer answer still lands in the cache for the follow-up request"""
+    k = (url, str(kw)); t = INFLIGHT.get(k)
+    if t is None or t.done():
+        t = asyncio.create_task(asyncio.wait_for(get(url, ttl=ttl, **kw), cap)); INFLIGHT[k] = t
+        def _done(x, k=k):
+            if INFLIGHT.get(k) is x: INFLIGHT.pop(k, None)
+            if not x.cancelled(): x.exception()   # mark retrieved
+        t.add_done_callback(_done)
+    return t
+def _warn(m):
+    WARN.append(m); del WARN[:-200]
+def _bs_start(a, path, params, cap):
+    if params == "done": return "done"
+    if time.time() - NEG.get(f"{a}/{path}/{params}", 0) < 600: return "neg"
+    return _bg_get(f"{BS}/addresses/{a}/{path}", cap, ttl=LONG if params else 900, params=params or {})
+def _bs_take(a, path, params, t):
+    """-> (items, next, status) with status None (ok) | 'failed' | 'pending' (still loading in the background)"""
+    if t == "done": return [], "done", None
+    if t == "neg": return [], params, "failed"
+    if not t.done(): return [], params, "pending"
+    if t.cancelled() or t.exception() is not None:
+        err = "cancelled" if t.cancelled() else (type(t.exception()).__name__ or "error")
+        NEG[f"{a}/{path}/{params}"] = time.time(); _warn(f"blockscout {path} unavailable for {a[:10]}: {err}"); return [], params, "failed"
+    d = t.result(); return d.get("items", []), (d.get("next_page_params") or "done"), None
 async def _bs_stream(a, path, params):
     """one Blockscout history stream; never raises. returns (items, next, failed)"""
     if params == "done": return [], "done", False
@@ -431,7 +467,7 @@ async def _bs_stream(a, path, params):
     if time.time() - NEG.get(nk, 0) < 600: return [], params, True
     d, err = await _cap(get(f"{BS}/addresses/{a}/{path}", ttl=LONG if params else 900, params=params or {}), 8 if "internal" in path else BS_STREAM_TIMEOUT)
     if d is None:
-        NEG[nk] = time.time(); WARN.append(f"blockscout {path} unavailable for {a[:10]}: {err}"); return [], params, True
+        NEG[nk] = time.time(); _warn(f"blockscout {path} unavailable for {a[:10]}: {err}"); return [], params, True
     return d.get("items", []), (d.get("next_page_params") or "done"), False
 async def eth_rpc_any(method, params, t=7):
     """race the free RPCs; first good answer wins"""
@@ -471,25 +507,45 @@ async def _ethplorer_history(a, want_eth=True, want_tok=True):
     return edges, hist, (isinstance(txs, list) or th is not None)
 async def eth_address(a, cursor=None, f=None, to=None, pages=1):
     out = {"chain": "eth", "unit": "ETH", "address": a}
-    await ensure_prices()
-    t0 = time.time(); DEADLINE = float(os.environ.get("CHAINTRACE_ETH_DEADLINE", "18")); miss = []
+    t0 = time.time(); DEADLINE = float(os.environ.get("CHAINTRACE_ETH_DEADLINE", "18")); miss = []; pending = []
+    fast = FAST.get() and not cursor and not (f or to)   # interactive first page: soft deadline + background completion
+    tm = {}; mark = lambda k: tm.setdefault(k, round(time.time() - t0, 2))
+    prices = asyncio.create_task(ensure_prices())        # concurrent with the fetches (was a serial step before them)
+    async def _bs_info(path, cap):
+        nk = f"{a}/{path or 'info'}"
+        if time.time() - NEG.get(nk, 0) < 600: return None
+        t = _bg_get(f"{BS}/addresses/{a}{path}", BS_TIMEOUT + 6 if fast else cap, ttl=900)   # same TTL as the first history page
+        done, _ = await asyncio.wait({t}, timeout=cap)
+        if not done: return None
+        if t.cancelled() or t.exception() is not None: NEG[nk] = time.time(); return None
+        return t.result()
     async def _hdr():
         # every source capped and concurrent; any of them may fail without failing the lookup
-        (info, e1), (cnt, e2), bal, code, nonce = await asyncio.gather(
-            _cap(get(f"{BS}/addresses/{a}"), BS_TIMEOUT), _cap(get(f"{BS}/addresses/{a}/counters"), min(6, BS_TIMEOUT)),
-            eth_rpc_any("eth_getBalance", [a, "latest"]), eth_rpc_any("eth_getCode", [a, "latest"]), eth_rpc_any("eth_getTransactionCount", [a, "latest"]))
+        rpcs = asyncio.gather(eth_rpc_any("eth_getBalance", [a, "latest"]), eth_rpc_any("eth_getCode", [a, "latest"]), eth_rpc_any("eth_getTransactionCount", [a, "latest"]))
+        bsi = asyncio.ensure_future(asyncio.gather(_bs_info("", BS_TIMEOUT), _bs_info("/counters", min(6, BS_TIMEOUT))))
+        bal, code, nonce = await rpcs; mark("rpc")
+        if fast and bal and code is not None:   # RPC already gave balance/type; Blockscout info only adds the counters
+            hd = asyncio.ensure_future(hist_done.wait())   # info/counters get until the history is ready, then a 0.3s grace
+            await asyncio.wait({bsi, hd}, timeout=15, return_when=asyncio.FIRST_COMPLETED)
+            if not bsi.done(): await asyncio.wait({bsi}, timeout=max(0.3, 1.5 - (time.time() - t0)))
+            hd.cancel()
+            info, cnt = bsi.result() if bsi.done() else (None, None)
+            if not bsi.done(): bsi.add_done_callback(lambda x: x.cancelled() or x.exception())   # finishes in the background (cache fill)
+        else: info, cnt = await bsi
+        mark("info")
         if info: out["address"] = info.get("hash") or a
-        else: miss.append("address info")
+        elif not (fast and bal): miss.append("address info")
         if bal: out["balance"] = int(bal, 16) / 1e18; out["balance_source"] = "rpc"
         elif info: out["balance"] = int(info.get("coin_balance") or 0) / 1e18; out["balance_source"] = "blockscout"
         else: out["balance"] = None; out["balance_source"] = "unavailable"
         out["is_contract"] = info.get("is_contract") if info else (None if code is None else code not in ("0x", "0x0", ""))
         if cnt: out["tx_count"] = cnt.get("transactions_count"); out["token_transfers_count"] = cnt.get("token_transfers_count")
-        else: miss.append("counters")
+        elif not (fast and nonce): miss.append("counters")
         try: cval = int(out.get("tx_count") or 0)
         except Exception: cval = 0
         if nonce and int(nonce, 16) > cval:   # missing/stale Blockscout counter (total txs can't be below outgoing nonce) -> RPC nonce
             out["tx_count"] = int(nonce, 16); out["tx_count_note"] = "outgoing txs (nonce) from RPC"
+    hist_done = asyncio.Event()
     hdr = asyncio.create_task(_hdr()) if not cursor else None   # runs concurrently with the history streams
     cur = dec(cursor) or {"t": None, "k": None, "i": None}
     al = a.lower(); ntags = {}; edges = []; hist = []
@@ -497,14 +553,38 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
         if x and x.get("hash"): ntags.setdefault(x["hash"], _tags(x))
     failed = set(); spec = None
     if not cursor and not (f or to):
-        async def _spec():   # hedge: if Blockscout hasn't answered within 5s, fetch the fallback in parallel
-            await asyncio.sleep(5); return await _ethplorer_history(a, True, True)
+        known_bad = any(time.time() - NEG.get(f"{a}/{p_}/None", 0) < 600 for p_ in ("transactions", "token-transfers"))
+        async def _spec():   # hedge: if Blockscout hasn't answered within HEDGE s, fetch the fallback in parallel (at once if it just failed)
+            await asyncio.sleep(0 if known_bad else (HEDGE if fast else 5)); return await _ethplorer_history(a, True, True)
         spec = asyncio.create_task(_spec())
     for _ in range(max(1, pages)):
-        (tx, ct, f1), (tt, ck, f2), (it, ci, f3) = await asyncio.gather(_bs_stream(a, "transactions", cur["t"]),
-            _bs_stream(a, "token-transfers", cur["k"]), _bs_stream(a, "internal-transactions", cur["i"]))
+        caps = {"transactions": BS_STREAM_TIMEOUT, "token-transfers": BS_STREAM_TIMEOUT, "internal-transactions": 8}
+        st = {p_: _bs_start(a, p_, cur[k_], BS_STREAM_TIMEOUT + 8 if fast else caps[p_]) for p_, k_ in (("transactions", "t"), ("token-transfers", "k"), ("internal-transactions", "i"))}
+        live = {t for t in st.values() if isinstance(t, asyncio.Task)}
+        if fast and live:
+            main = {st[p_] for p_ in ("transactions", "token-transfers") if st[p_] in live}
+            if main: await asyncio.wait(main, timeout=SOFT)
+            if st["internal-transactions"] in live:   # internal txs: a short grace once the main streams are in, never the full soft wait
+                await asyncio.wait({st["internal-transactions"]}, timeout=max(0, min(SOFT - (time.time() - t0), 1.5 if main else SOFT)))
+            slow = [p_ for p_, t in st.items() if isinstance(t, asyncio.Task) and not t.done()]
+            if slow:   # past the soft deadline: use Ethplorer for slow tx/token streams if it answers; never wait on internal txs alone
+                hist_slow = [p_ for p_ in slow if p_ != "internal-transactions"]
+                got_any = any(isinstance(t, asyncio.Task) and t.done() and not t.cancelled() and t.exception() is None for p_, t in st.items() if p_ != "internal-transactions")
+                if hist_slow and spec:
+                    try: sp = await asyncio.wait_for(asyncio.shield(spec), max(0.5, BS_STREAM_TIMEOUT - (time.time() - t0)))
+                    except Exception: sp = (None, None, False)
+                    if not sp[2]:   # fallback failed too: wait for Blockscout up to the normal cap
+                        await asyncio.wait({st[p_] for p_ in hist_slow}, timeout=max(0, BS_STREAM_TIMEOUT - (time.time() - t0)))
+                elif hist_slow or not got_any:
+                    await asyncio.wait({st[p_] for p_ in slow}, timeout=max(0, BS_STREAM_TIMEOUT - (time.time() - t0)))
+        elif live: await asyncio.wait(live, timeout=max(caps.values()))
+        mark("history")
+        (tx, ct, f1), (tt, ck, f2), (it, ci, f3) = [_bs_take(a, p_, cur[k_], st[p_]) for p_, k_ in (("transactions", "t"), ("token-transfers", "k"), ("internal-transactions", "i"))]
         for n_, fl in (("transactions", f1), ("token transfers", f2), ("internal transactions", f3)):
-            if fl: failed.add(n_)
+            if fl == "failed": failed.add(n_)
+            elif fl == "pending":
+                if fast: pending.append(n_)
+                else: failed.add(n_)
         cur = {"t": ct, "k": ck, "i": ci}; times = []
         for t in tx:
             fr, too = t.get("from"), t.get("to"); reg(fr); reg(too); ts = ts_of(t.get("timestamp")); times.append(ts)
@@ -534,9 +614,10 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
         times = [x for x in times if x]
         done = all(v == "done" for v in cur.values())
         if f and times and max(times) < f: done = True
-        if done or hist or failed or time.time() - t0 > DEADLINE: break
-    if ({"transactions", "token transfers"} & failed) and not cursor and not (f or to):
-        we, wt = "transactions" in failed, "token transfers" in failed
+        if done or hist or failed or pending or time.time() - t0 > DEADLINE: break
+    hist_done.set()
+    if ({"transactions", "token transfers"} & (failed | set(pending))) and not cursor and not (f or to):
+        we, wt = "transactions" in (failed | set(pending)), "token transfers" in (failed | set(pending))
         if spec:
             try: e2_, h2_, ok = await asyncio.wait_for(spec, 9)
             except Exception: e2_, h2_, ok = [], [], False
@@ -547,13 +628,16 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
         what = " + ".join(x for x, w in (("ETH transfers", we), ("token transfers", wt)) if w)
         cs = {x.lower(): x for e in edges for x in (e["source"], e["target"])}   # reuse checksum forms seen from Blockscout
         for e in e2_: e["source"] = cs.get(e["source"].lower(), e["source"]); e["target"] = cs.get(e["target"].lower(), e["target"])
-        if ok: edges += e2_; hist += h2_; out["history_source"] = f"{what} from Ethplorer (fallback, last ~50)"
+        if ok: edges += e2_; hist += h2_; out["history_source"] = f"{what} from Ethplorer (fallback, last ~50)"; mark("ethplorer")
         else: out["history_source"] = f"{what} unavailable"
     if spec: spec.cancel()
     if hdr:
         try: await asyncio.wait_for(hdr, max(1, 20 - (time.time() - t0)))
         except Exception: miss.append("header")
         out.setdefault("balance", None)
+    try: await asyncio.wait_for(asyncio.shield(prices), 5)
+    except Exception: pass
+    mark("prices")
     # canonical address: from Blockscout info, else the checksummed form seen in edges, else as typed
     if not out.get("address") or out["address"] == a:
         seen = next((x for e in edges for x in (e["source"], e["target"]) if x.lower() == al and x != al), None)
@@ -564,9 +648,14 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
         if e["target"].lower() == al: e["target"] = a
     out["nodes"], out["edges"], out["txs"] = _finish_page("eth", a, edges, hist, ntags); out["cp"] = CP_LAST[0]
     out["next"] = None if all(v == "done" for v in cur.values()) or (f and done) else enc(cur)
+    mark("built"); out["timing"] = tm
+    if pending:   # still loading from Blockscout in the background; the client re-requests shortly and gets the cached result
+        out["pending"] = pending; out["partial"] = True
+        out["warnings"] = [f"Still loading {', '.join(pending)} from Blockscout; this view refreshes automatically"
+                           + (f" (meanwhile {out['history_source']})" if out.get("history_source") else "")]
     if failed or miss:
         out["partial"] = True
-        out["warnings"] = [f"Some data unavailable from Blockscout ({', '.join(sorted(failed) + miss)}); showing partial results"
+        out["warnings"] = (out.get("warnings") or []) + [f"Some data unavailable from Blockscout ({', '.join(sorted(failed) + miss)}); showing partial results"
                            + (f" — history from {out['history_source']}" if out.get("history_source") else "")]
     return out
 

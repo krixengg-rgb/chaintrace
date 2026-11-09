@@ -227,12 +227,22 @@ function share(extra){const p=new URLSearchParams();const q=$('q').value.trim();
  if($('df').value)p.set('from',$('df').value);if($('dt').value)p.set('to',$('dt').value);history.replaceState(null,'','?'+p.toString())}
 function demo(a){$('q').value=a;setBadge();go()}
 async function go(){const q=$('q').value.trim();if(!q)return;mode='lookup';share();cy.elements().remove();expanded.clear();$('det').innerHTML='';skeleton();
- try{const d=await api(q);add(d,d.address||('tx:'+d.tx));expanded.add(d.address);cur=d;render(d);cy.animate({fit:{padding:40}},{duration:400})}catch(e){$('side').innerHTML=''}}
-async function loadMore(){if(!cur||!cur.next)return;const b=$('more');if(b){b.disabled=true;b.textContent='Loading…'}
+ try{const d=await api(q);add(d,d.address||('tx:'+d.tx));expanded.add(d.address);cur=d;render(d);cy.animate({fit:{padding:40}},{duration:400});if(d.pending&&d.pending.length)refreshPending(q,d,1)}catch(e){$('side').innerHTML=''}}
+// progressive load: the server answers within ~4s and keeps fetching slow Blockscout streams in the background; re-ask (cache hit) and merge
+function refreshPending(q,d0,n){setTimeout(async()=>{if(cur!==d0||mode!=='lookup'||$('q').value.trim()!==q)return;
+ try{const r=await fetch('/api/lookup?q='+encodeURIComponent(q)+dts());if(!r.ok)return;const d=await r.json();if(cur!==d0)return;
+  d.kind=d.kind||'address';if(d.pending&&d.pending.length&&n>=4)delete d.pending;add(d,null);cur=d;
+  const busyUI=$('det').innerHTML.trim()||(document.activeElement&&document.activeElement.closest&&document.activeElement.closest('aside'));
+  if(!busyUI)render(d);else if(!(d.pending&&d.pending.length)){   // user is working in the side panel: don't reflow it, patch in place
+   const m=$('more');if(m&&d.next){m.disabled=false;m.textContent='Load more';m.onclick=loadMore}
+   for(const w of document.querySelectorAll('#side .warnbox'))if(w.textContent.includes('Still loading'))w.innerHTML='✓ Full first page loaded · <a href="#" onclick="render(cur);return false">refresh panel</a>'}
+  if(d.pending&&d.pending.length)refreshPending(q,d,n+1);else toast('Full history loaded')}catch(e){}},n===1?3000:4500)}
+async function loadMore(){if(!cur||!cur.next||(cur.pending&&cur.pending.length))return;const b=$('more');if(b){b.disabled=true;b.textContent='Loading…'}
  try{const d=await api(cur.address,cur.next);add(d,null);Object.assign(d,{balance:cur.balance,balance_usd:cur.balance_usd,tx_count:cur.tx_count,tokens:cur.tokens,risk:cur.risk,label:cur.label,kind:'address'});
   d.txs=cur.txs.concat(d.txs);d.cluster=[...new Set((cur.cluster||[]).concat(d.cluster||[]))];cur=d;render(d)}catch(e){if(b){b.disabled=false;b.textContent='Load more'}}}
 async function expand(id){if(id.startsWith('tx:')||expanded.has(id))return;expanded.add(id);
- try{const d=await api(id);add(d,null);toast('Expanded '+short(id)+' (+'+d.edges.length+' flows)')}catch(e){expanded.delete(id)}}
+ try{const d=await api(id);add(d,null);toast('Expanded '+short(id)+' (+'+d.edges.length+' flows)');
+  if(d.pending&&d.pending.length)setTimeout(async()=>{try{const r=await fetch('/api/lookup?q='+encodeURIComponent(id)+dts());if(r.ok)add(await r.json(),null)}catch(e){}},6000)}catch(e){expanded.delete(id)}}
 // ---------- trace jobs ----------
 async function traceN(){const q=$('q').value.trim();if(!q)return;mode='trace';share();cy.elements().remove();expanded.clear();$('det').innerHTML='';skeleton();
  const p=`q=${encodeURIComponent(q)}&hops=${$('hops').value}&direction=${$('dir').value}&topk=${$('topk').value}`;
@@ -271,7 +281,7 @@ function render(d){const r=d.risk||{};const id=d.address||d.tx;let h=`<div class
  if(d.cluster&&d.cluster.length>1)h+=`<details style="margin-top:10px"><summary class="dim">Common-input cluster · ${d.cluster.length} addresses</summary><div class="mono" style="margin-top:6px">${d.cluster.slice(0,40).map(esc).join('<br>')}</div></details>`;
  h+='</div>';
  if(d.txs){h+=`<div class="card glass"><h3>Activity<span class="sp"></span><span class="dim" style="text-transform:none;letter-spacing:0">${d.txs.length} loaded</span></h3><table>`+d.txs.map(t=>`<tr><td><a class="mono" target="_blank" rel="noopener" href="${CH[d.chain].tx+esc(t.tx)}">${short(t.tx||'')}</a><button class="copy" onclick="copy('${esc(t.tx)}')">⧉</button><div class="dim" style="font-size:11px">${tfmt(t.time)}${t.method?' · '+esc(t.method):''}${t.destination_tag!=null?' · tag '+esc(t.destination_tag):''}</div></td><td class="r ${t.delta>=0?'pos':'neg'}">${t.delta>=0?'+':''}${fmt(t.delta,4)} ${esc(t.unit)}<div class="dim" style="font-size:11px">${usd(t.usd)}</div></td></tr>`).join('')+'</table>'
-  +(d.next?'<div class="row"><button class="btn" id="more" onclick="loadMore()">Load more</button></div>':'<div class="dim" style="font-size:12px;margin-top:8px">End of history (or date range)</div>')+'</div>'}
+  +(d.pending&&d.pending.length&&d.next?'<div class="row"><button class="btn" id="more" disabled title="the first page is still completing in the background">Loading full history…</button></div>':d.next?'<div class="row"><button class="btn" id="more" onclick="loadMore()">Load more</button></div>':'<div class="dim" style="font-size:12px;margin-top:8px">End of history (or date range)</div>')+'</div>'}
  $('side').innerHTML=h}
 function renderTrace(j){const r=j.risk||{};let h=`<div class="card glass"><h3>${chainTag(j.chain)} Multi-hop trace<span class="sp"></span><span class="dim" style="text-transform:none;letter-spacing:0">${j.direction} · ${j.hops} hops · ${j.elapsed??'–'}s</span></h3>${addrLine(j.q,j.chain,!(j.root||'').indexOf('tx:'))}
  ${j.summary&&j.summary.balance!=null?`<div class="kv"><div>Balance</div><div><span class="big">${fmt(j.summary.balance)} ${j.summary.unit}</span></div><div>Graph</div><div>${j.nodes.length} nodes · ${j.edges.length} flows${j.capped?' (capped)':''}</div></div>`:''}

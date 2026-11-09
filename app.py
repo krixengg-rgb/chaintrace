@@ -70,6 +70,8 @@ def finish(d):
     if d.get("balance") is not None: d["balance_usd"] = chains.usd_of(d["balance"], d.get("unit"))
     d["price_usd"] = chains.PRICE.get((d.get("unit") or "").upper())
     return d
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=2000)   # 50-75 KB lookup JSON -> ~8-12 KB (local/tunnel; Render's edge also compresses)
 @app.get("/api/lookup")
 async def lookup(q: str, chain: str | None = None, cursor: str | None = None, date_from: int | None = None, date_to: int | None = None):
     if _t.time() - bridges._vts[0] > 3600: asyncio.create_task(bridges.refresh_vaults())
@@ -82,13 +84,17 @@ async def lookup(q: str, chain: str | None = None, cursor: str | None = None, da
     if not c: raise HTTPException(400, "Unrecognised address / tx hash")
     try:
         if kind == "address":
-            d = await asyncio.wait_for(chains.ADDR[c](q.strip(), cursor=cursor, f=date_from, to=date_to, pages=6 if (date_from or date_to) else 1), LOOKUP_TIMEOUT)
+            tok = chains.FAST.set(True)   # interactive: soft deadline, slow Blockscout streams finish in the background
+            try: d = await asyncio.wait_for(chains.ADDR[c](q.strip(), cursor=cursor, f=date_from, to=date_to, pages=6 if (date_from or date_to) else 1), LOOKUP_TIMEOUT)
+            finally: chains.FAST.reset(tok)
         else:
             await chains.ensure_prices(); d = await asyncio.wait_for(chains.TX[c](q.strip()), LOOKUP_TIMEOUT)
             for e in d["edges"]: e.setdefault("usd", chains.usd_of(e.get("amount"), e.get("unit") or d.get("unit")))
     except asyncio.TimeoutError: raise HTTPException(504, f"{c} data sources too slow right now (>{LOOKUP_TIMEOUT:.0f}s); please retry")
     except Exception as e: raise HTTPException(502, f"{c} upstream error: {e}")
-    d["kind"] = kind; return finish(d)
+    d["kind"] = kind; t1 = _t.time(); d = finish(d)
+    if isinstance(d.get("timing"), dict): d["timing"]["finish"] = round(_t.time() - t1, 3)
+    return d
 def _cp_sugg(c, cps):
     if c not in deposits.NATIVE: return
     for x in cps:
