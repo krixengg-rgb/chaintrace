@@ -23,7 +23,7 @@ def build_store(src=PUB, dst=STORE):
     """stream src (jsonl.gz, or legacy inferred_deposits.json) into SQLite; returns row count"""
     tmp = dst + ".tmp"
     if os.path.exists(tmp): os.remove(tmp)
-    db = sqlite3.connect(tmp); db.execute("CREATE TABLE inf(chain TEXT, addr TEXT, t TEXT, ent TEXT, p REAL, ev TEXT, PRIMARY KEY(chain,addr,t))"); n = 0
+    db = sqlite3.connect(tmp); db.execute("PRAGMA journal_mode=OFF"); db.execute("PRAGMA synchronous=OFF"); db.execute("CREATE TABLE inf(chain TEXT, addr TEXT, t TEXT, ent TEXT, p REAL, ev TEXT, PRIMARY KEY(chain,addr,t))"); n = 0
     def put(c, a, t, e, p, ev):
         nonlocal n; db.execute("INSERT OR REPLACE INTO inf VALUES(?,?,?,?,?,?)", (c, a, t, e, p, json.dumps(ev, separators=(",", ":")) if ev else None)); n += 1
     if os.path.exists(src):
@@ -42,12 +42,21 @@ def _src_mtime():
     for f in (PUB, os.path.join(D, "inferred_deposits.json")):
         if os.path.exists(f): return os.path.getmtime(f)
     return 0
+def ensure_store():
+    """build the on-disk inferred-label store if missing/stale (run in a worker thread at startup; ~10s on a cold Render disk)"""
+    with _lock:
+        if not os.path.exists(STORE) or os.path.getmtime(STORE) < _src_mtime():
+            try: build_store()
+            except Exception as ex: print("inferred store build failed:", ex)
+    return os.path.exists(STORE)
 def _db():
     if getattr(_tl, "db", None) is None:
-        with _lock:
+        if not _lock.acquire(blocking=False): return False   # store being built (startup warm-up): skip suggestions now, don't block the event loop
+        try:
             if not os.path.exists(STORE) or os.path.getmtime(STORE) < _src_mtime():
                 try: build_store()
                 except Exception as ex: print("inferred store build failed:", ex)
+        finally: _lock.release()
         _tl.db = sqlite3.connect(f"file:{STORE}?mode=ro", uri=True, check_same_thread=False) if os.path.exists(STORE) else False
         if _tl.db: _tl.db.execute("PRAGMA cache_size=-1000")
     return _tl.db

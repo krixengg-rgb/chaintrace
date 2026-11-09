@@ -70,6 +70,20 @@ def finish(d):
     if d.get("balance") is not None: d["balance_usd"] = chains.usd_of(d["balance"], d.get("unit"))
     d["price_usd"] = chains.PRICE.get((d.get("unit") or "").upper())
     return d
+_WARM = {}
+@app.on_event("startup")
+async def _warm_up():
+    """off the request path: build the inferred-label store and touch the label DB in worker threads, fetch prices"""
+    _WARM["dep"] = asyncio.create_task(asyncio.to_thread(deposits.ensure_store))
+    _WARM["lbl"] = asyncio.create_task(asyncio.to_thread(lambda: labels.label("eth", "0x28C6c06298d514Db089934071355E5743bf21d60")))
+    asyncio.create_task(chains.ensure_prices())
+async def _warm_wait(cap=1.0):
+    """give a cold-start warm-up at most ~1s; never hold a lookup hostage to the store build (soft deadline is 4s)"""
+    pend = [t for t in _WARM.values() if not t.done()]
+    if pend:
+        try: await asyncio.wait(pend, timeout=cap)
+        except Exception: pass
+    return not (_WARM.get("dep") and not _WARM["dep"].done())
 from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=2000)   # 50-75 KB lookup JSON -> ~8-12 KB (local/tunnel; Render's edge also compresses)
 @app.get("/api/lookup")
@@ -92,7 +106,10 @@ async def lookup(q: str, chain: str | None = None, cursor: str | None = None, da
             for e in d["edges"]: e.setdefault("usd", chains.usd_of(e.get("amount"), e.get("unit") or d.get("unit")))
     except asyncio.TimeoutError: raise HTTPException(504, f"{c} data sources too slow right now (>{LOOKUP_TIMEOUT:.0f}s); please retry")
     except Exception as e: raise HTTPException(502, f"{c} upstream error: {e}")
-    d["kind"] = kind; t1 = _t.time(); d = finish(d)
+    d["kind"] = kind; t1 = _t.time(); warm = await _warm_wait(); d = finish(d)
+    if not warm and d.get("chain") in deposits.NATIVE:   # inferred-label store still building after a cold start: client auto-refreshes
+        d["pending"] = (d.get("pending") or []) + ["suggested labels"]; d["partial"] = True
+        d["warnings"] = (d.get("warnings") or []) + ["Suggested deposit labels still loading after a restart; this view refreshes automatically"]
     if isinstance(d.get("timing"), dict): d["timing"]["finish"] = round(_t.time() - t1, 3)
     return d
 def _cp_sugg(c, cps):
