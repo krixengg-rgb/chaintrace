@@ -418,6 +418,8 @@ async def build(p):
     if exch: findings.append(f"Funds reached {len(exch)} attributed exchange/VASP endpoint(s): " + "; ".join(sorted({e[0] for e in exch if e[0]}))[:300] + ". A production order to the VASP can confirm account ownership.")
     hr = sorted({(r[2].get('kind'), r[2].get('name') or '') for r in risk})
     if hr: findings.append("High-risk counterparties in graph: " + "; ".join(f"{k}: {n}" for k, n in hr)[:400] + ".")
+    SW = [n["swap"] for i, n in nodes.items() if n.get("kind") == "swap" and isinstance(n.get("swap"), dict)]
+    if SW: findings.append(f"{len(SW)} Ethereum DEX swap(s) shown as readable steps (Section 3.1), e.g. " + "; ".join(str(x.get("text") or "")[:120] for x in SW[:3]) + ".")
     if B: findings.append(f"{len(B)} cross-chain bridge hop(s) identified; {len(B) - len(heur)} linked deterministically by the bridge’s own indexer" + (f", {len(heur)} heuristic (lead only)" if heur else "") + " (Section 4).")
     if sugg: findings.append(f"{len(sugg)} address(es) carry ChainTrace-inferred (AI/model-suggested) exchange-deposit labels. These are intelligence leads only (Section 5).")
     findings += [f"ChainTrace risk note: {x}" for x in reasons[:6]]
@@ -467,10 +469,29 @@ async def build(p):
                 link = tx_url(c, h); amt = num(e.get("amount")) + (f"\n×{e['count']}" if (e.get("count") or 1) > 1 else ""); asset = unit_of(e) or "?"
             r.cell(str(k)); r.cell(t_both(tm) if tm else "–")
             r.cell(ch); r.cell(txt, style=MONOS)
-            r.cell(((fl + "\n") if fl else "") + (wrap_hex(fa, 30) if not is_tx(e["source"]) else "(transaction)"), style=MONOS)
-            r.cell(((tl + "\n") if tl else "") + (wrap_hex(ta, 30) if not is_tx(e["target"]) else "(transaction)"), style=MONOS)
-            r.cell(asset); r.cell(amt); r.cell((usd(v) + f" {basis}") if v is not None else "–")
+            swp = e.get("swap") if isinstance(e.get("swap"), dict) else None
+            r.cell(((fl + "\n") if fl else "") + (wrap_hex(fa, 30) if not is_tx(e["source"]) else ("(DEX swap step, see 3.1)" if swp else "(transaction)")), style=MONOS)
+            r.cell(((tl + "\n") if tl else "") + (wrap_hex(ta, 30) if not is_tx(e["target"]) else ("(DEX swap step, see 3.1)" if swp else "(transaction)")), style=MONOS)
+            r.cell(asset + (f"\nswap: {swp.get('leg')}" if swp else "")); r.cell(amt); r.cell((usd(v) + f" {basis}") if v is not None else "–")
             r.cell(dom(link) if link else "–", link=link, style=FontFace(color=(0, 80, 170), size_pt=6.6))
+    # ---------- 3.1 DEX swaps ----------
+    if SW:
+        pdf.h2(f"3.1 DEX swaps as readable steps ({len(SW)})")
+        pdf.para("Each row is one Ethereum transaction in which the trader exchanged one asset for another on a decentralised exchange (DEX). ChainTrace decoded it from the "
+                 "transaction receipt: the DEX's own Swap event logs (Uniswap V2/V3/V4, SushiSwap, PancakeSwap, Balancer V2, Curve) and the trader's ERC-20 transfers, ETH value and "
+                 "internal ETH transfers. 'Decoded' means the pair and amounts come from event logs; anything marked 'inferred' was derived from transfers only and should be checked "
+                 "on a block explorer. USD values are at trace-time prices (see Section 3 for historical valuations).", size=7.4, color=GREY)
+        with pdf.tbl((33, 50, 44, 46, 46, 30, 20), size=6.6, lh=3.0) as t:
+            r = t.row(); [r.cell(x) for x in ("Time (UK / UTC)", "Transaction hash / trader", "Readable step", "Sold", "Bought", "Venue / pools", "Basis")]
+            for x in sorted(SW, key=lambda x: x.get("time") or 0):
+                r = t.row(); r.cell(t_both(x["time"]) if x.get("time") else "–")
+                r.cell(f"{wrap_hex(x.get('tx'), 33)}\ntrader {wrap_hex(x.get('trader'), 33)}", style=MONOS, link=tx_url("eth", x.get("tx")))
+                r.cell(str(x.get("text") or ""))
+                r.cell("\n".join(f"{num(y.get('amount'))} {y.get('symbol')}" + (f" ({usd(y.get('usd'))})" if y.get("usd") is not None else "") for y in x.get("sold") or []))
+                r.cell("\n".join(f"{num(y.get('amount'))} {y.get('symbol')}" + (f" ({usd(y.get('usd'))})" if y.get("usd") is not None else "") for y in x.get("bought") or []))
+                hops = "; ".join(f"{h.get('dex')}{(' ' + h['fee']) if h.get('fee') else ''} {str(h.get('pool') or '')[:10]}…" for h in (x.get("hops") or [])[:4])
+                r.cell(f"{x.get('venue')}\ncalled: {(x.get('router') or {}).get('name') or str((x.get('router') or {}).get('address') or '')[:12]}\n{hops}"[:300])
+                r.cell("Decoded (event logs)" if x.get("decoded") else "Partly inferred: " + "; ".join(x.get("inferred") or [x.get("method") or ""])[:160], style=DETF if x.get("decoded") else LEADF)
     # ---------- 4 bridges ----------
     pdf.h1("4. Cross-chain bridge hops")
     if B:
@@ -566,6 +587,7 @@ async def build(p):
     ], size=7.8)
     pdf.h2("Known gaps and limitations")
     pdf.bullets([
+        "DEX swaps (Ethereum): decoded from public receipt logs for Uniswap V2/V3/V4, SushiSwap, PancakeSwap, Balancer V2 and Curve, with aggregator routers (1inch, 0x, CoW, ParaSwap, Uniswap Universal Router) named from the called contract. Uniswap V4 pool tokens are not resolved and other DEXes are inferred from transfers only. Swaps are decoded for the most recent likely-swap transactions of each looked-up address, not every historical swap.",
         "Coverage: Bitcoin, Ethereum, Solana, TRON and the XRP Ledger are traced natively. EVM L2s and other chains appear as bridge destinations for context. Privacy coins, Lightning, custodial (off-chain) transfers inside exchanges, and OTC desks are not visible.",
         "Labels can be incomplete, out of date or wrong. The absence of a label does not mean an address is unattributed in commercial datasets. Historical rotated THORChain vaults may be unlabelled.",
         "Bridges not covered: Circle CCTP direct, native L2 canonical bridges, and other bridges without a free public indexer. The Relay public API is rate-limited. deBridge and Across cannot be looked up from the destination transaction.",

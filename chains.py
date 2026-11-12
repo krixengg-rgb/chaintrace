@@ -302,8 +302,20 @@ async def eth_tx(h):
         for x in (a, b):
             if x: nodes.setdefault(x["hash"], node("eth", x["hash"], _tags(x)))
         if a and b: edges.append({"source": a["hash"], "target": b["hash"], "amount": val, "unit": tok.get("symbol") or "TOKEN", "tx": h})
+    sw = None
+    try:   # readable DEX swap step (public RPC receipt logs); the raw transfers stay in the graph
+        import swaps
+        sw = await asyncio.wait_for(swaps.decode(h), 9)
+        if sw:
+            canon = {k.lower(): k for k in nodes}
+            sn, se = swaps.graph(sw, canon, tid)
+            nodes[tid].update(kind="swap", name=sn[0]["name"], swap=sw)
+            for n_ in sn[1:]: nodes.setdefault(n_["id"], n_)
+            keys = {(e["source"], e["target"], e["unit"]) for e in se}
+            edges = [e for e in edges if (e["source"], e["target"], e["unit"]) not in keys] + se
+    except Exception: sw = None
     return {"chain":"eth","tx":h,"time":t.get("timestamp"),"status":t.get("status"),"method":t.get("method"),
-            "fee":int((t.get("fee") or {}).get("value") or 0)/1e18,"unit":"ETH","nodes":list(nodes.values()),"edges":edges}
+            "fee":int((t.get("fee") or {}).get("value") or 0)/1e18,"unit":"ETH","nodes":list(nodes.values()),"edges":edges, "swaps": [sw] if sw else []}
 
 # ---------------- SOL (public RPC) ----------------
 SOL = "https://api.mainnet-beta.solana.com"
@@ -651,6 +663,10 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
     for e in edges:   # unify case of the focus address across sources
         if e["source"].lower() == al: e["source"] = a
         if e["target"].lower() == al: e["target"] = a
+    try:
+        import swaps   # likely DEX swaps (sent one asset, received another in the same tx): the client asks /api/eth/swaps to decode them
+        out["swap_candidates"] = swaps.candidates(a, edges)
+    except Exception: pass
     out["nodes"], out["edges"], out["txs"] = _finish_page("eth", a, edges, hist, ntags); out["cp"] = CP_LAST[0]
     out["next"] = None if all(v == "done" for v in cur.values()) or (f and done) else enc(cur)
     mark("built"); out["timing"] = tm

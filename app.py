@@ -224,6 +224,24 @@ async def make_report(request: Request):
     return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="ChainTrace-report-{name}.pdf"',
         "X-Report-SHA256": info["pdf_sha256"], "X-Case-SHA256": info["case_sha256"], "X-Report-Pages": str(info["pages"]),
         "Access-Control-Expose-Headers": "X-Report-SHA256, X-Case-SHA256, X-Report-Pages"})
+@app.post("/api/eth/swaps")
+async def eth_swaps(request: Request):
+    """decode likely DEX swaps into readable steps. Body {txs:[hash,...<=12], trader:"0x.."}. Free data: public RPC receipts + eth_call."""
+    try: p = await request.json()
+    except Exception: raise HTTPException(400, "body must be JSON")
+    import re as _re, swaps
+    txs = [h for h in (p.get("txs") or []) if isinstance(h, str) and _re.fullmatch(r"0x[0-9a-fA-F]{64}", h)][:12]
+    tr = p.get("trader") if isinstance(p.get("trader"), str) and _re.fullmatch(r"0x[0-9a-fA-F]{40}", p.get("trader") or "") else None
+    if not txs: return {"swaps": [], "nodes": [], "edges": []}
+    await chains.ensure_prices()
+    res = await swaps.decode_many(txs, tr, budget=min(22, LOOKUP_TIMEOUT - 3))
+    nodes, edges = {}, []
+    canon = {tr.lower(): tr} if tr else {}
+    for sw in res:
+        n_, e_ = swaps.graph(sw, canon)
+        for x in n_: nodes.setdefault(x["id"], x)
+        edges += e_
+    return {"swaps": res, "nodes": list(nodes.values()), "edges": edges, "asked": len(txs)}
 @app.post("/api/evidence-pack")
 async def evidence_pack(request: Request):
     """UK law-enforcement evidence pack: PDF report with investigator-entered Report Fraud/NFIB/officer fields + per-VASP DRAFT records requests (DOCX/TXT),
