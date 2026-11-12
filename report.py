@@ -11,7 +11,7 @@ from fpdf import FPDF, FontFace
 from fpdf.enums import XPos, YPos
 import chains, labels, bridges, screen
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 H = os.path.dirname(os.path.abspath(__file__))
 UK = ZoneInfo("Europe/London")
 def _commit():
@@ -235,6 +235,9 @@ async def build(p):
     meta = {"ref": (meta_in.get("ref") or "").strip()[:80], "investigator": (meta_in.get("investigator") or "").strip()[:120],
             "marking": (meta_in.get("marking") or "").strip()[:60], "notes": (meta_in.get("notes") or "").strip()[:4000],
             "case_name": (case.get("name") or "Untitled case")[:120]}
+    import evidence   # lazy (evidence imports this module)
+    le = evidence.clean_le(meta_in.get("le")); pack = bool(meta_in.get("evidence_pack"))
+    if isinstance(p.get("meta"), dict) and (le or "le" in p["meta"]): p["meta"]["le"] = le   # hashed exactly as printed
     data = {k: p.get(k) for k in ("case", "nodes", "edges", "trace", "meta", "log")}
     data_bytes = canon(data); data_sha = hashlib.sha256(data_bytes).hexdigest()
     png = None; png_sha = None
@@ -293,6 +296,9 @@ async def build(p):
         ("Case data SHA-256", data_sha, MONO),
         ("Graph image SHA-256", png_sha or "(no image)", MONO),
     ])
+    if le:
+        cov = [(k2, le.get(k)) for k, k2 in (("crime_ref", "Crime reference"), ("rf_ref", "Report Fraud ref"), ("nfib_code", "NFIB code"), ("offence", "Offence(s)")) if le.get(k)]
+        if cov: pdf.ln(1); kv(pdf, cov)
     pdf.ln(2)
     if meta["notes"]: pdf.h2("Investigator notes"); pdf.para(meta["notes"], size=8.8)
     pdf.box("The case data SHA-256 is computed over the canonical JSON of the case data exactly as received by ChainTrace "
@@ -302,6 +308,27 @@ async def build(p):
     pdf.box("This document was generated automatically by ChainTrace, an analysis tool that reads public blockchain records via third-party APIs. "
             "It is not an official form or template of any police force, agency or court. Attributions are only as reliable as their sources (see Sections 5 and 7). "
             "Items marked “Intelligence lead” are not evidence and need independent corroboration.", color=AMBER, title="About this document")
+    # ---------- UK case details (investigator-entered; never invented) ----------
+    try: V = evidence.vasp_schedule(p)
+    except Exception as ex: V = []; errs.append(f"VASP schedule: {type(ex).__name__}")
+    if le or pack:
+        pdf.h1("UK case details (investigator-entered)")
+        pdf.para("These fields were typed by the investigator. ChainTrace does not create, check or look up crime, Report Fraud / Action Fraud (NFRC) or NFIB references. "
+                 "Blank fields were not entered. Report Fraud replaced Action Fraud on 4 December 2025; NFIB classification codes are those in the Home Office Counting Rules for fraud.", size=7.8, color=GREY)
+        kv(pdf, [(lab, (val or "(not entered)") if k != "facts" else None) for k, (lab, _) in evidence.LE_FIELDS.items() for val in [le.get(k)] if k != "facts"], w=(70, None))
+        pdf.h2("Facts of the case (investigator-entered)"); pdf.para(le.get("facts") or "(not entered)", size=8.6)
+        if V:
+            pdf.h2("Exchanges / VASPs identified in the graph")
+            pdf.para("Each firm below has a draft records request in the evidence pack (vasp_drafts/), and the full address schedule is in Appendix C. "
+                     "The drafts are not court orders: the officer must complete them and serve them through the proper legal route.", size=8)
+            with pdf.tbl((52, 22, 40, 40, pdf.epw - 154), size=7.4) as t:
+                r = t.row(); [r.cell(x) for x in ("Firm", "Addresses", "Traced in (USD)", "Traced out (USD)", "Basis")]
+                for v in V:
+                    r = t.row(); r.cell(v["entity"], style=BOLD); r.cell(str(len(v["addresses"]))); r.cell(usd(v["in_usd"])); r.cell(usd(v["out_usd"]))
+                    r.cell("Inferred deposit address only – " + LEAD if v["lead_only"] else "Dataset / explorer / investigator label", style=LEADF if v["lead_only"] else None)
+        pdf.box("This report and any draft request produced with it are analysis products. On-chain data and third-party labels are intelligence leads to be corroborated by the "
+                "VASP's own records (for example via a production order under POCA 2002 s.345 or PACE 1984 Sch 1, made by a judge on the officer's application, or a voluntary "
+                "request). Overseas firms may need mutual legal assistance. Take your own legal advice.", color=AMBER, title="Use of this pack")
     # ---------- 1 executive summary ----------
     pdf.h1("1. Executive summary")
     n_addr = sum(1 for i in nodes if not is_tx(i))
@@ -601,6 +628,33 @@ async def build(p):
     pdf.para("To verify: open the PDF's attachments panel (or use a tool such as pdfdetach), save case_data.json, then run “sha256sum case_data.json”. The result should equal the value above. "
              "Changing any address, amount, label or note in the case data gives a different hash. The SHA-256 of the PDF file itself is reported separately when the report is generated, "
              "because a file cannot contain its own hash.", size=8.2)
+    # ---------- appendix C: VASP production-order schedule ----------
+    if V:
+        pdf.h1("Appendix C. Exchange / VASP schedule (for records requests)", landscape=True)
+        pdf.para("Every address in the graph attributed to an exchange or other cryptoasset service provider (VASP), grouped by firm, with destination tags, memos, the flows "
+                 "visible in this graph, transaction hashes and first/last seen times. Labels were re-checked against ChainTrace's label datasets when this report was generated. "
+                 "This is draft material for the officer: it is not a production order and has no legal effect. " + LEAD + ".", size=7.6, color=GREY)
+        for v in V:
+            pdf.h2(f"{v['entity']}  ·  {len(v['addresses'])} address(es)" + ("  ·  INFERRED LEAD ONLY" if v["lead_only"] else ""))
+            with pdf.tbl((12, 62, 26, 22, 50, 50, 47), size=6.6, lh=3.0) as t:
+                r = t.row(); [r.cell(x) for x in ("Chain", "Address", "Dest. tag(s) / memo(s)", "Txs", "Traced amounts", "First / last seen (UK, UTC)", "Role / basis")]
+                for a_ in v["addresses"]:
+                    r = t.row(); r.cell(code(a_["chain"])); r.cell(a_["address"], style=MONOS)
+                    r.cell(("tags " + ", ".join(a_["dtags"]) if a_["dtags"] else "–") + (("\nmemo " + ", ".join(a_["memos"])) if a_["memos"] else ""))
+                    r.cell(f"in {a_['n_in']}\nout {a_['n_out']}")
+                    r.cell(f"in: {evidence.amounts(a_['in'])}\nout: {evidence.amounts(a_['out'])}")
+                    r.cell(f"{t_line(a_['first'])}\n{t_line(a_['last'])}" if a_["first"] else "–")
+                    r.cell(a_["role"] + ("\nSANCTIONS: " + "; ".join(a_["sanctioned"]) if a_["sanctioned"] else "") + ("\n" + LEAD if a_["lead"] else ""), style=LEADF if a_["lead"] else None)
+            txs = [(a_, t_) for a_ in v["addresses"] for t_ in a_["txs"]][:60]
+            if txs:
+                with pdf.tbl((12, 84, 22, 36, 52, 63), size=6.3, lh=2.9) as t:
+                    r = t.row(); [r.cell(x) for x in ("Chain", "Transaction hash", "Direction", "Amount", "Time (UK / UTC)", "Counterparty")]
+                    for a_, t_ in txs:
+                        r = t.row(); r.cell(code(a_["chain"])); r.cell(t_["tx"], style=MONOS, link=t_.get("url")); r.cell("into firm" if t_["dir"] == "in" else "out of firm")
+                        r.cell(f"{num(t_['amount'])} {t_['unit']}" + (f" ×{t_['count']}" if t_["count"] > 1 else "") + (f"\ntag {t_['dtag']}" if t_.get("dtag") is not None else ""))
+                        r.cell(t_line(t_["time"]) if t_["time"] else "–"); r.cell(t_["cp"] or "–", style=MONOS)
+        pdf.para("What to request (adapt to what is necessary and proportionate): " + "; ".join(f"{t_}" for t_, _ in evidence.REQUEST_ITEMS) + ". "
+                 "UK-registered cryptoasset firms can be checked on the FCA register. Firms outside the UK may need mutual legal assistance.", size=7.6)
     pdf.embed_file(bytes=data_bytes, basename="case_data.json", desc="ChainTrace canonical case data (hashed on the cover)", modification_date=datetime.fromtimestamp(gen, timezone.utc))
     out = bytes(pdf.output())
     return out, {"case_sha256": data_sha, "png_sha256": png_sha, "pdf_sha256": hashlib.sha256(out).hexdigest(), "pages": pdf.page_no(), "notes": errs}

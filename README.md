@@ -89,3 +89,10 @@ When a flow hits a bridge, ChainTrace looks up the matching transfer on the dest
 * UI: tx lookups auto-detect bridge transfers. Addresses get a **⇄ Cross-chain activity** button, and bridge nodes and edges get **⇄ Follow across bridge**. L2 and other foreign-chain nodes are shown for context only, with explorer links.
 * Not covered yet: Circle CCTP direct, native L2 canonical bridges, the Relay v3 key-only API, and labels for historical rotated THORChain vaults.
 * UI test: `LP=... python3 uitest_bridge.py`.
+
+## UK police evidence pack (v12)
+Report → **🇬🇧 UK police evidence pack** (or open any case with `&pack=1`). Optional, investigator-entered fields: force crime ref, Report Fraud / Action Fraud (NFRC) ref, NFIB code, victim/case ref, offence, period of interest, facts, officer details (remembered on the device only). **Evidence pack (.zip)** gives:
+- the PDF report with a "UK case details" section and Appendix C (every exchange / VASP address: chain, address, XRP destination tags, memos, traced amounts, tx hashes, first/last seen UK + UTC);
+- `vasp_drafts/` – one **DRAFT records request per exchange** (DOCX + TXT), marked "DRAFT – NOT A COURT ORDER" on every page, with legal-route options (POCA 2002 s.345 / PACE 1984 Sch 1 / POCA s.363 & s.370 / DPA 2018 Sch 2 para 2 voluntary request / MLA via UKCA for overseas firms) for the officer to choose, complete and serve;
+- `vasp_schedule.csv`, `HOW_TO_USE.txt`, `SHA256SUMS.txt`.
+ChainTrace is not an official Home Office / NCA / Report Fraud / court system; drafts are analysis products, on-chain data is an intelligence lead to corroborate with the VASP's records, and officers must take their own legal advice. API: `POST /api/evidence-pack` (same body as `/api/report`, plus `meta.le`).

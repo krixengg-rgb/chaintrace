@@ -182,6 +182,9 @@ def _agg(edges, cap):
             if e.get("flags"): x["flags"] = sorted(set(x.get("flags") or []) & set(e["flags"]))   # flagged only if every transfer is
             else: x["flags"] = []
         else: m[k] = {**e, "count": 1, "first": t, "last": t, "flags": list(e.get("flags") or [])}
+        if e.get("destination_tag") is not None:   # XRP: keep every tag seen on the aggregated pair (identifies the exchange customer)
+            dt = m[k].setdefault("destination_tags", [])
+            if e["destination_tag"] not in dt and len(dt) < 25: dt.append(e["destination_tag"])
     return sorted(m.values(), key=lambda e: -e["amount"])[:cap]
 
 # ---------------- ETH (Blockscout + public RPC) ----------------

@@ -224,6 +224,24 @@ async def make_report(request: Request):
     return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="ChainTrace-report-{name}.pdf"',
         "X-Report-SHA256": info["pdf_sha256"], "X-Case-SHA256": info["case_sha256"], "X-Report-Pages": str(info["pages"]),
         "Access-Control-Expose-Headers": "X-Report-SHA256, X-Case-SHA256, X-Report-Pages"})
+@app.post("/api/evidence-pack")
+async def evidence_pack(request: Request):
+    """UK law-enforcement evidence pack: PDF report with investigator-entered Report Fraud/NFIB/officer fields + per-VASP DRAFT records requests (DOCX/TXT),
+    VASP schedule CSV, how-to and SHA256SUMS, as one zip. Drafts are not court orders."""
+    if int(request.headers.get("content-length") or 0) > 20 * 1024 * 1024: raise HTTPException(413, "case payload too large (max 20 MB)")
+    try: p = await request.json()
+    except Exception: raise HTTPException(400, "body must be JSON")
+    if not isinstance(p, dict) or not isinstance(p.get("nodes"), list) or not isinstance(p.get("edges"), list): raise HTTPException(400, "expected {case, nodes[], edges[], ...}")
+    if len(p["nodes"]) > 3000 or len(p["edges"]) > 6000: raise HTTPException(413, "graph too large for a report (max 3000 nodes / 6000 edges)")
+    import evidence
+    async with _REPORT_SEM:
+        try: z, info = await asyncio.wait_for(evidence.build_pack(p), LOOKUP_TIMEOUT + 30)
+        except asyncio.TimeoutError: raise HTTPException(504, "evidence pack generation timed out")
+    import json as _json
+    return Response(z, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="ChainTrace-evidence-pack-{info["ref"]}.zip"',
+        "X-Pack-SHA256": info["zip_sha256"], "X-Report-SHA256": info["pdf_sha256"], "X-Case-SHA256": info["case_sha256"], "X-Report-Pages": str(info["pages"]),
+        "X-Pack-VASPs": _json.dumps(info["vasps"], ensure_ascii=True)[:1800],
+        "Access-Control-Expose-Headers": "X-Pack-SHA256, X-Report-SHA256, X-Case-SHA256, X-Report-Pages, X-Pack-VASPs"})
 # ---------------- screening: sanctions lists (hard flag) + community reports (unverified leads) ----------------
 SCREEN_MAX = 500
 def _screen_one(raw, chain=None):
