@@ -52,9 +52,13 @@ async def main():
             await pg.click("#det >> text=Add as lead (dashed)"); await pg.wait_for_timeout(500)
             hv = await pg.evaluate("cy.edges('[?heur]').length"); check("heuristic lead edge added", hv >= 1, hv)
             lab = await pg.evaluate("document.getElementById('det').innerText"); check("heuristic labelled lead only", "lead only" in lab.lower())
-            # 5) expand guard on foreign (Arbitrum) node
-            await pg.evaluate("expand(cy.nodes('[?xnode]')[0].id())"); await pg.wait_for_timeout(300)
-            tt = await pg.evaluate("document.getElementById('toast').textContent"); check("foreign node not expandable", "context only" in tt, tt)
+            # 5) since v16 Arbitrum is a supported chain: the lead's Arbitrum node is expandable (not a context-only foreign node);
+            #    chains ChainTrace cannot expand (e.g. Avalanche) keep the guard
+            r5 = await pg.evaluate("({arb:cy.nodes().map(n=>n.id()).filter(i=>i.startsWith('arb:')),x:cy.nodes('[?xnode]').map(n=>n.id())})")
+            check("Arbitrum node expandable (v16), not marked foreign", bool(r5["arb"]) and not any(i.startswith("arb:") for i in r5["x"]), r5)
+            await pg.evaluate("cy.add({data:{id:'avax:0x1111111111111111111111111111111111111111',xnode:true,lbl:'avax test',info:{chain:'avax'}}});expand('avax:0x1111111111111111111111111111111111111111')"); await pg.wait_for_timeout(300)
+            tt = await pg.evaluate("document.getElementById('toast').textContent"); check("foreign (Avalanche) node not expandable", "context only" in tt, tt)
+            await pg.evaluate("cy.getElementById('avax:0x1111111111111111111111111111111111111111').remove()")
             # 6) AutoTrace with bridge following: ETH -> THORChain -> BTC
             await ctx.close(); ctx = await b.new_context(viewport=vp, http_credentials=AUTH); pg = await ctx.new_page(); pg.on("pageerror", lambda e: errs.append(str(e)))
             await pg.goto(U + "/"); await pg.fill("#q", AT_ROOT); await pg.fill("#amin", "1"); await pg.select_option("#amax", "4")
