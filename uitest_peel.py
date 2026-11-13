@@ -84,7 +84,7 @@ async def main():
         check("UI: tapping a change edge shows confidence + reasons", "Likely change (heuristic)" in await pg.evaluate("document.getElementById('det').textContent") and "round" in (await pg.evaluate("document.getElementById('det').textContent")).lower())
         await pg.evaluate(f"cy.getElementById('tx:{TX1}').emit('tap')"); await pg.wait_for_function("document.querySelector('#det .chgcard .out')", timeout=60000)
         check("UI: tx node shows the change analysis card", "Change analysis" in await pg.evaluate("document.getElementById('det').textContent"))
-        await pg.screenshot(path=f"{SHOT}_desktop_change.png")
+        await pg.evaluate("document.querySelector('#det .chgcard').scrollIntoView()"); await pg.wait_for_timeout(400); await pg.screenshot(path=f"{SHOT}_desktop_change.png")
         # victim-loss through the chain: hops through likely change are flagged as leads
         await pg.evaluate(f"ctLossOpen()"); await pg.fill("#losst", TX1); await pg.fill("#losss", C1); await pg.click("#lossgo")
         await pg.wait_for_function("window.CT_LOSS_LAST", timeout=120000); L = await pg.evaluate("window.CT_LOSS_LAST")
