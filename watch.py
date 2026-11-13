@@ -46,7 +46,7 @@ async def check_one(item, cap=16.0):
     """item: {id, address, chain?, name, ref, rules, cursor?, since?} -> {id, status, cursor, events, summary, warnings}"""
     a = (item.get("address") or "").strip(); wid = item.get("id") or a
     c, kind = chains.detect(a)
-    c = item.get("chain") if item.get("chain") in ("btc", "eth", "sol", "tron", "xrp") and c else c
+    c = item.get("chain") if item.get("chain") in chains.ADDR and c and (c not in chains.EVM or item.get("chain") in chains.EVM) else c
     if not c or kind != "address": return {"id": wid, "status": "error", "error": "not a BTC/ETH/SOL/TRON/XRP address", "events": []}
     rules = norm_rules(item.get("rules")); cur = dict(item.get("cursor") or {}); base = not cur.get("checked")
     if base and item.get("since"): cur = {"t": int(item["since"]), "seen": []}; base = False
@@ -55,8 +55,8 @@ async def check_one(item, cap=16.0):
     except asyncio.TimeoutError: return {"id": wid, "status": "error", "error": f"{c} data sources too slow (>{cap:.0f}s)", "events": []}
     except Exception as e: return {"id": wid, "status": "error", "error": f"{c} upstream error: {type(e).__name__}: {str(e)[:120]}", "events": []}
     finally: chains.FRESH.reset(tf); chains.RAW.reset(tr)
-    focus = d.get("address") or a; fl = focus.lower() if c == "eth" else focus
-    same = (lambda x: (x or "").lower() == fl) if c == "eth" else (lambda x: x == fl)
+    focus = d.get("address") or a; fl = focus.lower() if c in chains.EVM else focus
+    same = (lambda x: (x or "").lower() == fl) if c in chains.EVM else (lambda x: x == fl)
     hist = [h for h in (d.get("txs") or []) if h.get("tx")]
     edges = raw.get("edges") or d.get("edges") or []
     by_tx = {}

@@ -30,9 +30,9 @@ async def run(job, q, hops, direction, topk, max_nodes):
             elif n.get("kind") and not nodes[n["id"]].get("kind"): nodes[n["id"]] = n
     try:
         if kind == "address":
-            root = q.strip() if c != "eth" else (await chains.ADDR[c](q.strip()))["address"]; frontier = [(root, 0)]
+            root = q.strip() if c not in chains.EVM else (await chains.ADDR[c](q.strip()))["address"]; frontier = [(root, 0)]
         else:
-            d = await chains.TX[c](q.strip()); add(d); root = "tx:" + q.strip(); frontier = []
+            d = await chains.TX[c](q.strip()); add(d); root = "tx:" + (d.get("tx") or q.strip()); frontier = []
             for e in d["edges"]:
                 edges[(e["source"], e["target"], e.get("unit"))] = e
                 if direction in ("forward", "both") and e["source"] == root and e["target"] not in parent:

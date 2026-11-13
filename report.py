@@ -22,7 +22,8 @@ def _commit():
 COMMIT = _commit()
 LEAD = "Intelligence lead – not evidence; corroborate (e.g. production order to the VASP)"
 STABLE = {"USDT", "USDC", "DAI", "USDS", "PYUSD", "FDUSD", "TUSD", "USDE", "USDC.E", "BUSD"}
-PXSYM = {"BTC": "BTC", "WBTC": "BTC", "CBBTC": "BTC", "ETH": "ETH", "WETH": "ETH", "STETH": "ETH", "SOL": "SOL", "WSOL": "SOL"}
+PXSYM = {"BTC": "BTC", "WBTC": "BTC", "CBBTC": "BTC", "BTCB": "BTC", "ETH": "ETH", "WETH": "ETH", "STETH": "ETH", "SOL": "SOL", "WSOL": "SOL",
+         "BNB": "BNB", "WBNB": "BNB", "POL": "POL", "WPOL": "POL", "MATIC": "POL", "WMATIC": "POL"}
 ENDPOINT_KINDS = {"exchange", "sanctioned", "terrorism", "darknet", "ransomware", "hack", "scam", "mixer", "blocklisted", "gambling", "bridge"}
 MAX_PNG = 12 * 1024 * 1024
 NAVY, TEAL, AMBER, RED, GREY, LINE, HEAD, ZEBRA = (22, 38, 74), (0, 110, 130), (165, 90, 0), (170, 20, 40), (92, 100, 116), (205, 210, 220), (229, 234, 242), (247, 248, 251)
@@ -36,7 +37,7 @@ def t_both(ts):
     a, b = datetime.fromtimestamp(ts, UK), datetime.fromtimestamp(ts, timezone.utc)
     return f"{t_uk(ts)}\n" + (b.strftime("%H:%M:%S UTC") if a.date() == b.date() else t_utc(ts))
 def t_line(ts): return f"{t_uk(ts)} ({datetime.fromtimestamp(ts, timezone.utc).strftime('%H:%M:%S UTC')})" if ts else "–"
-def code(c): return (c or "?").upper() if c in ("btc", "eth", "sol", "tron", "xrp") else chain_name(c)
+def code(c): return (c or "?").upper() if c in ("btc", "eth", "sol", "tron", "xrp") else {"bsc": "BSC", "arb": "ARB", "base": "BASE", "polygon": "POL", "op": "OP"}.get(c) or chain_name(c)
 def num(x, d=8):
     if x is None: return "–"
     try: x = float(x)

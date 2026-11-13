@@ -1,4 +1,4 @@
-import os
+import os, evmcfg
 D = os.path.join(os.path.dirname(__file__), "data")
 def _load(f):
     try: return {l.strip() for l in open(os.path.join(D, f)) if l.strip()}
@@ -57,7 +57,7 @@ HACK = {
  },
  "eth": {}, "btc": {}, "sol": {},
 }
-def norm(chain, a): return a.lower() if chain == "eth" else a
+def norm(chain, a): return evmcfg.bare(a).lower() if chain in evmcfg.EVM else a
 import sqlite3, threading, screen
 LDB = os.path.join(D, "labels.sqlite")
 RISK = {"sanctioned": 100, "terrorism": 95, "darknet": 85, "ransomware": 85, "hack": 80, "scam": 75, "mixer": 75, "blocklisted": 50,
@@ -73,8 +73,18 @@ def _db():
 def db_labels(chain, a):
     db = _db()
     if not db: return []
-    return [dict(zip(("category","entity","name","source","source_url","licence","confidence"), r)) for r in
-            db.execute("SELECT category,entity,name,source,source_url,licence,confidence FROM labels WHERE chain=? AND address=?", (chain, norm(chain, a)))]
+    q = "SELECT category,entity,name,source,source_url,licence,confidence FROM labels WHERE chain=? AND address=?"
+    rows = [dict(zip(("category","entity","name","source","source_url","licence","confidence"), r)) for r in db.execute(q, (chain, norm(chain, a)))]
+    if chain in evmcfg.NEW and not rows:
+        # same 0x address labelled on Ethereum: an EOA is the same key holder on every EVM chain (exchange hot wallets, phishers),
+        # a contract usually is not. Carried over as a lower-confidence lead, clearly marked, never as a sanctions hit.
+        for r in db.execute(q, ("eth", norm(chain, a))):
+            d = dict(zip(("category","entity","name","source","source_url","licence","confidence"), r))
+            if d["source"] in ("ofac", "allowlist"): continue
+            d.update(name=f"{d['name'] or d['entity'] or ''} (Ethereum label)".strip(), source=f"{d['source']} (Ethereum, same address)",
+                     confidence=round((d["confidence"] or 0.5) * 0.7, 2), inherited="eth")
+            rows.append(d)
+    return rows
 def label(chain, a, extra_tags=None):
     k = norm(chain, a)
     if k in ("0x0000000000000000000000000000000000000000", "11111111111111111111111111111111"): return {"name": "null/system", "kind": None, "tags": [], "risk": 0, "sources": []}
@@ -118,7 +128,7 @@ def _label_rows(chain, a, rows, extra_tags=None):
 def _label_v1(chain, a, extra_tags=None):
     k = norm(chain, a); tags = []; kind = None; name = None
     if k in ("0x0000000000000000000000000000000000000000", "11111111111111111111111111111111"): return {"name": "null/system", "kind": None, "tags": [], "risk": 0}
-    if k in OFAC[chain]: tags.append("OFAC sanctioned"); kind = "sanctioned"
+    if k in OFAC.get("eth" if chain in evmcfg.EVM else chain, ()): tags.append("OFAC sanctioned"); kind = "sanctioned"
     if chain == "eth" and k in MIXERS_ETH: name = MIXERS_ETH[k]; tags.append("mixer"); kind = kind or "mixer"
     ex = EXCH.get(chain, {}).get(k)
     if ex: name = name or ex; tags.append("exchange"); kind = kind or "exchange"

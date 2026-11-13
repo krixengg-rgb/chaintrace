@@ -12,10 +12,12 @@ STALE_SECS = 86400
 S = {"idx": {}, "raw": {}, "lists": {}, "counts": {}, "generated": 0, "sha256": None, "path": None, "refreshing": False, "last_refresh": None, "refresh_error": None}
 REPORT_CATS = {"scam", "hack", "ransomware", "darknet", "blocklisted", "terrorism"}
 NOT_REPORTS = {"ofac", "builtin", "allowlist"}   # official list / own seed data are not "community reports"
-SUPPORTED = ("btc", "eth", "sol", "tron", "xrp")
+SUPPORTED = ("btc", "eth", "sol", "tron", "xrp", "bsc", "arb", "base", "polygon", "op")
 
+EVM_ALIAS = ("bsc", "arb", "base", "polygon", "op")   # EVM chains screened against the 0x (ETH/EVM) listings
 def key(chain, a):
     a = (a or "").strip()
+    if chain in EVM_ALIAS or chain == "eth": a = a.split(":", 1)[1] if ":" in a and a.split(":", 1)[0] in EVM_ALIAS else a
     if chain == "eth" or a.startswith("0x"): return a.lower()
     if a.lower().startswith("bc1"): return a.lower()
     return a
@@ -62,7 +64,7 @@ def wording(e, L=None):
 def sanctions(chain, a):
     """official sanctions-list hits for (chain, address). EVM addresses match any 0x listing (ETH, USDT/USDC on ETH, ARB, BSC, ETC)."""
     if not a or not S["idx"]: return []
-    hits = S["idx"].get((chain, key(chain, a))) or []
+    hits = S["idx"].get(("eth" if chain in EVM_ALIAS else chain, key(chain, a))) or []
     seen, out = set(), []
     for e in hits:
         k = (e["l"], e.get("uid"))

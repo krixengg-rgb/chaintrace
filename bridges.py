@@ -61,7 +61,8 @@ CH = {
  "aptos": ("Aptos", "https://explorer.aptoslabs.com/txn/", "https://explorer.aptoslabs.com/account/", False),
  "near": ("NEAR", "https://nearblocks.io/txns/", "https://nearblocks.io/address/", False),
 }
-NATIVE = {"eth", "btc", "sol", "tron", "xrp"}   # chains ChainTrace can expand further
+NATIVE = {"eth", "btc", "sol", "tron", "xrp"}   # chains whose graph ids are bare (not chain-prefixed)
+EXPANDABLE = NATIVE | {"bsc", "arb", "base", "polygon", "op"}   # chains ChainTrace can expand further (EVM L2s/BSC keep prefixed ids)
 WH = {1: "sol", 2: "eth", 4: "bsc", 5: "polygon", 6: "avax", 10: "fantom", 14: "celo", 15: "near", 16: "moonbeam", 21: "sui", 22: "aptos",
       23: "arb", 24: "op", 30: "base", 34: "scroll", 35: "mantle", 36: "blast", 38: "linea", 39: "berachain", 40: "sei", 44: "unichain",
       45: "worldchain", 46: "ink", 47: "hyperevm", 52: "sonic"}
@@ -96,7 +97,7 @@ def side(c, tx=None, address=None, amount=None, unit=None, t=None, usd=None, sta
     info = CH.get(c)
     return {"chain": c, "chain_name": cname(c), "tx": tx, "address": address, "amount": _f(amount), "unit": unit, "time": chains.ts_of(t) if t else None,
             "usd": _f(usd), "status": status, "tx_url": (info[1] + tx) if (info and tx) else None,
-            "address_url": (info[2] + address) if (info and address) else None, "expandable": c in NATIVE}
+            "address_url": (info[2] + address) if (info and address) else None, "expandable": c in EXPANDABLE}
 def _f(x):
     try: return None if x is None or x == "" else float(x)
     except Exception: return None
@@ -547,9 +548,9 @@ def fragment(m, anchor=None, which="dst"):
         a = sd.get("address")
         if not a and sd.get("tx"): nid = node_id(sd["chain"], "tx:" + sd["tx"]) if sd["chain"] not in NATIVE else "tx:" + sd["tx"]; n = {"id": nid, "chain": sd["chain"], "kind": "tx", "name": f"{cname(sd['chain'])} tx {sd['tx'][:10]}", "tags": [], "risk": 0}
         elif not a: return None
-        elif sd["chain"] in NATIVE: n = chains.node(sd["chain"], a); nid = n["id"]
+        elif sd["chain"] in EXPANDABLE: n = chains.node(sd["chain"], a); nid = n["id"]
         else: nid = node_id(sd["chain"], a); n = {"id": nid, "chain": sd["chain"], "name": None, "kind": None, "tags": [], "risk": 0}
-        n["foreign"] = sd["chain"] not in NATIVE; n["chain_name"] = cname(sd["chain"]); n["address_url"] = sd.get("address_url"); return n
+        n["foreign"] = sd["chain"] not in EXPANDABLE; n["chain_name"] = cname(sd["chain"]); n["address_url"] = sd.get("address_url"); return n
     if which == "src":   # we are on the destination side: link source sender -> anchor
         sn = mk(s); dn = None; tgt = anchor or (mk(d) or {}).get("id")
         if not sn or not tgt: return [], []
@@ -586,7 +587,7 @@ KNOWN = {  # bridge contracts the bundled label set misses (names verified again
 }
 def decorate_vault(n, chain):
     """label a current THORChain/Maya inbound vault/router as a bridge endpoint (only if the node has no stronger label)"""
-    a = n.get("id") or ""; k = (chain, a.lower() if chain == "eth" else a)
+    a = n.get("id") or ""; a = a.split(":", 1)[1] if chain in chains.EVM and ":" in a else a; k = (chain, a.lower() if chain in chains.EVM else a)
     nm = VAULTS.get(k) or KNOWN.get(k)
     if nm and not n.get("kind"):
         n.update(kind="bridge", name=nm, risk=max(n.get("risk") or 0, 5), tags=sorted(set(n.get("tags") or []) | {"bridge"}))

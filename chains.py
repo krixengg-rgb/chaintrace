@@ -1,7 +1,8 @@
 import httpx, time, asyncio, re, json, sqlite3, os, base64
 from datetime import datetime
 from labels import label
-import addrutil
+import addrutil, evmcfg
+from evmcfg import EVM, EVM_CHAINS, NEW as EVM_NEW
 # HTTP cache: disposable. On an ephemeral disk (Render free) it is simply rebuilt after restarts.
 CACHE_PATH = os.environ.get("CHAINTRACE_CACHE", os.path.join(os.path.dirname(__file__), "cache.sqlite"))
 CACHE_MAX_ROWS = int(os.environ.get("CHAINTRACE_CACHE_MAX_ROWS", "20000"))
@@ -17,6 +18,12 @@ def _open_cache():
 DB = _open_cache(); DB.execute("PRAGMA cache_size=-4000")
 _writes = [0]
 WARN = []
+BSDEAD = {}   # explorer host -> time it last refused us (Cloudflare challenge / key required); skipped for 15 min
+def _bs_base(chain):
+    """first usable Blockscout API base for the chain (public instance, then the keyed multichain API), or None"""
+    for b in EVM[chain]["bs"]:
+        if time.time() - BSDEAD.get(b.split("/api/v2")[0], 0) > 900: return b
+    return None
 CP_LAST = [None]   # counterparties of the most recent page (read synchronously right after ADDR returns)
 NEG = {}
 STATS = {"hit": 0, "miss": 0}
@@ -35,7 +42,7 @@ TTL = 300
 LONG = 30 * 86400   # immutable data (old pages, confirmed txs)
 SEM = {"mempool.space": asyncio.Semaphore(3), "blockscout": asyncio.Semaphore(6), "solana": asyncio.Semaphore(1), "trongrid": asyncio.Semaphore(3), "xrpl": asyncio.Semaphore(2), "other": asyncio.Semaphore(4)}
 def _sem(u):
-    if u.startswith(os.environ.get("CHAINTRACE_BS", "https://eth.blockscout.com")): return SEM["blockscout"]   # stalled Blockscout never starves RPC
+    if "blockscout" in u or u.startswith(os.environ.get("CHAINTRACE_BS", "https://eth.blockscout.com")) or "explorer.optimism.io" in u: return SEM["blockscout"]   # stalled Blockscout never starves RPC
     if "trongrid.io" in u or "tronstack.io" in u: return SEM["trongrid"]
     if "xrplcluster.com" in u or "ripple.com" in u or "xrpl.org" in u: return SEM["xrpl"]
     return next((v for k, v in SEM.items() if k in u), SEM["other"])
@@ -49,22 +56,32 @@ def dec(c): return json.loads(base64.urlsafe_b64decode(c.encode())) if c else No
 client = httpx.AsyncClient(timeout=httpx.Timeout(15, connect=6), headers={"User-Agent": "chaintrace-mvp"},
                            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10))
 # ---- USD prices (CoinGecko free simple-price, cached 10 min) ----
-PRICE = {"USDT": 1.0, "USDC": 1.0, "DAI": 1.0, "USDS": 1.0, "PYUSD": 1.0, "FDUSD": 1.0, "TUSD": 1.0, "USDE": 1.0}
+PRICE = {"USDT": 1.0, "USDC": 1.0, "DAI": 1.0, "USDS": 1.0, "PYUSD": 1.0, "FDUSD": 1.0, "TUSD": 1.0, "USDE": 1.0,
+         "USDT0": 1.0, "USD₮0": 1.0, "USDC.E": 1.0, "USDBC": 1.0, "BUSD": 1.0, "BSC-USD": 1.0, "AXLUSDC": 1.0}
 _price_ts = [0.0]
 _price_task = [None]; _cg_fail = [0.0]
-def _set_prices(b, e, s_, trx, xrp):
-    PRICE.update({"BTC": b, "WBTC": b, "ETH": e, "WETH": e, "STETH": e, "SOL": s_, "WSOL": s_, "TRX": trx, "XRP": xrp})
+CG_IDS = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "TRX": "tron", "XRP": "ripple", "BNB": "binancecoin", "POL": "polygon-ecosystem-token"}
+ALIAS = {"BTC": ("WBTC", "BTCB", "CBBTC"), "ETH": ("WETH", "STETH"), "SOL": ("WSOL",), "BNB": ("WBNB",), "POL": ("WPOL", "MATIC", "WMATIC")}
+def _set_prices(m):
+    for k, v in m.items():
+        if v:
+            PRICE[k] = float(v)
+            for a in ALIAS.get(k, ()): PRICE[a] = float(v)
 async def _refresh_prices():
     ex = "skipped (failed <1h ago)"
     if time.time() - _cg_fail[0] > 3600:
         try:
-            d = await asyncio.wait_for(get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,tron,ripple&vs_currencies=usd", ttl=600), 4)
-            _set_prices(d["bitcoin"]["usd"], d["ethereum"]["usd"], d["solana"]["usd"], d["tron"]["usd"], d["ripple"]["usd"]); _price_ts[0] = time.time(); return
+            d = await asyncio.wait_for(get("https://api.coingecko.com/api/v3/simple/price?ids=" + ",".join(CG_IDS.values()) + "&vs_currencies=usd", ttl=600), 4)
+            m = {k: (d.get(i) or {}).get("usd") for k, i in CG_IDS.items()}
+            if not all(m.get(k) for k in ("BTC", "ETH")): raise Exception("incomplete")
+            _set_prices(m); _price_ts[0] = time.time(); return
         except Exception as e: ex = e; _cg_fail[0] = time.time()   # CoinGecko often 403/429s shared cloud IPs such as Render
     try:   # fallback: Coinbase spot
-        syms = ("BTC", "ETH", "SOL", "TRX", "XRP")
-        r = await asyncio.wait_for(asyncio.gather(*[get(f"https://api.coinbase.com/v2/prices/{c}-USD/spot", ttl=600) for c in syms]), 5)
-        _set_prices(*(float(x["data"]["amount"]) for x in r)); _price_ts[0] = time.time()
+        syms = tuple(CG_IDS)
+        r = await asyncio.wait_for(asyncio.gather(*[get(f"https://api.coinbase.com/v2/prices/{c}-USD/spot", ttl=600) for c in syms], return_exceptions=True), 5)
+        m = {c: float(x["data"]["amount"]) for c, x in zip(syms, r) if isinstance(x, dict) and x.get("data")}
+        if not m.get("BTC"): raise Exception("coinbase incomplete")
+        _set_prices(m); _price_ts[0] = time.time()
     except Exception as ex2:
         print("price fetch failed:", ex, "| fallback:", ex2); _price_ts[0] = time.time() - 540   # retry in ~1 min
 async def ensure_prices():
@@ -89,8 +106,11 @@ async def get(url, ttl=TTL, **kw):
     STATS["miss"] += 1
     async with _sem(url):
       for i in range(4):
-        r = await client.get(url, **kw)
+        if "api.blockscout.com/" in url and evmcfg.BS_KEY: r = await client.get(url, headers={"Authorization": f"Bearer {evmcfg.BS_KEY}"}, **kw)
+        else: r = await client.get(url, **kw)
         if r.status_code == 429: await asyncio.sleep(1.5 * (i + 1)); continue
+        if r.status_code in (401, 402, 403) and ("blockscout" in url or "explorer.optimism.io" in url):
+            BSDEAD[url.split("/api/v2")[0]] = time.time(); _warn(f"explorer refused ({r.status_code}): {url.split('/api/v2')[0]}")
         r.raise_for_status(); break
       if "solana" not in url: await asyncio.sleep(0.15)
     if r.status_code == 429: raise Exception("rate limited")
@@ -111,10 +131,18 @@ async def rpc(url, method, params, ttl=None):
     if "error" in j: raise Exception(j["error"])
     _cache[k] = (time.time(), j["result"]); return j["result"]
 
-def detect(q):
-    q = q.strip()
-    if re.fullmatch(r"0x[0-9a-fA-F]{40}", q): return "eth", "address"
-    if re.fullmatch(r"0x[0-9a-fA-F]{64}", q): return "eth", "tx"
+def detect(q, chain=None):
+    """-> (chain, 'address'|'tx'). 0x values are ambiguous across EVM chains: 'base:0x…' or chain= picks one (default Ethereum)."""
+    q = (q or "").strip()
+    pc, rest = evmcfg.split(q)
+    if pc:
+        if re.fullmatch(r"0x[0-9a-fA-F]{40}", rest): return pc, "address"
+        if re.fullmatch(r"(0x)?[0-9a-fA-F]{64}", rest): return pc, "tx"
+        return None, None
+    if q.startswith("tx:"): q = q[3:]
+    ev = chain if chain in EVM else "eth"
+    if re.fullmatch(r"0x[0-9a-fA-F]{40}", q): return ev, "address"
+    if re.fullmatch(r"0x[0-9a-fA-F]{64}", q): return ev, "tx"
     if addrutil.is_tron_address(q): return "tron", "address"
     if addrutil.is_xrp_address(q): return "xrp", "address"
     if re.fullmatch(r"[0-9a-fA-F]{64}", q): return "btc", "tx"   # bare 64-hex: BTC by default; pass chain=tron|xrp to force
@@ -124,7 +152,10 @@ def detect(q):
     return None, None
 
 def node(chain, a, tags=None):
+    if chain in EVM_NEW:
+        b = evmcfg.bare(a); l = label(chain, b, tags); return {"id": evmcfg.nid(chain, b), "chain": chain, "address": b, **l}
     l = label(chain, a, tags); return {"id": a, "chain": chain, **l}
+def is_evm(c): return c in EVM
 
 # ---------------- BTC (mempool.space) ----------------
 MP = "https://mempool.space/api"
@@ -257,9 +288,9 @@ def _agg_unit(edges, cap):
     return sorted(m.values(), key=lambda e: (-(e["usd"] or 0), -e["count"]))[:cap]
 def counterparties(chain, focus, agg, raw=None, limit=150):
     """per (counterparty, direction) summary of flows touching `focus`: USD, per-token amounts, tx count, first/last seen, flags"""
-    fl = focus.lower() if chain == "eth" else focus; cps = {}
+    fl = focus.lower() if chain in EVM else focus; cps = {}
     for e in agg:
-        s_, t_ = (e["source"].lower(), e["target"].lower()) if chain == "eth" else (e["source"], e["target"])
+        s_, t_ = (e["source"].lower(), e["target"].lower()) if chain in EVM else (e["source"], e["target"])
         if s_ == fl and t_ != fl: cp, d = e["target"], "out"
         elif t_ == fl and s_ != fl: cp, d = e["source"], "in"
         else: continue
@@ -279,7 +310,7 @@ def counterparties(chain, focus, agg, raw=None, limit=150):
         if n.get("reports"): x["reports"] = {"count": n["reports"]["count"], "categories": n["reports"]["categories"]}
     series = []
     for e in (raw or []):
-        s_, t_ = (e["source"].lower(), e["target"].lower()) if chain == "eth" else (e["source"], e["target"])
+        s_, t_ = (e["source"].lower(), e["target"].lower()) if chain in EVM else (e["source"], e["target"])
         if fl not in (s_, t_) or s_ == t_: continue
         t = e.get("time") if isinstance(e.get("time"), (int, float)) else ts_of(e.get("time"))
         if t: series.append([t, round(usd_of(e.get("amount"), e.get("unit"), e.get("rate")) or 0, 2), "out" if s_ == fl else "in", e["unit"], 1 if e.get("flags") else 0])
@@ -442,7 +473,7 @@ async def btc_address(a, cursor=None, f=None, to=None, pages=1):
 
 BS_TIMEOUT = float(os.environ.get("CHAINTRACE_BS_TIMEOUT", "9"))      # hard per-call cap for Blockscout info/counters/tx
 BS_STREAM_TIMEOUT = float(os.environ.get("CHAINTRACE_BS_STREAM_TIMEOUT", "11"))   # history streams (token-transfers is often ~9s)
-ETH_RPCS = [ETH_RPC, "https://eth.drpc.org", "https://cloudflare-eth.com"]   # free, keyless public RPCs (raced)
+ETH_RPCS = EVM["eth"]["rpcs"]   # free, keyless public RPCs (raced)
 FAST = contextvars.ContextVar("fast", default=False)   # set by /api/lookup (interactive); traces/scans keep full waits
 SOFT = float(os.environ.get("CHAINTRACE_ETH_SOFT", "4"))    # interactive soft deadline for Blockscout history streams
 HEDGE = float(os.environ.get("CHAINTRACE_ETH_HEDGE", "2.5"))  # start the Ethplorer hedge after this many seconds
@@ -464,10 +495,10 @@ def _bg_get(url, cap, ttl=TTL, **kw):
     return t
 def _warn(m):
     WARN.append(m); del WARN[:-200]
-def _bs_start(a, path, params, cap):
+def _bs_start(a, path, params, cap, base=None, ka=None):
     if params == "done": return "done"
-    if time.time() - NEG.get(f"{a}/{path}/{params}", 0) < 600: return "neg"
-    return _bg_get(f"{BS}/addresses/{a}/{path}", cap, ttl=LONG if params else 900, params=params or {})
+    if time.time() - NEG.get(f"{ka or a}/{path}/{params}", 0) < 600: return "neg"
+    return _bg_get(f"{base or BS}/addresses/{a}/{path}", cap, ttl=LONG if params else 900, params=params or {})
 def _bs_take(a, path, params, t):
     """-> (items, next, status) with status None (ok) | 'failed' | 'pending' (still loading in the background)"""
     if t == "done": return [], "done", None
@@ -486,13 +517,13 @@ async def _bs_stream(a, path, params):
     if d is None:
         NEG[nk] = time.time(); _warn(f"blockscout {path} unavailable for {a[:10]}: {err}"); return [], params, True
     return d.get("items", []), (d.get("next_page_params") or "done"), False
-async def eth_rpc_any(method, params, t=7):
-    """race the free RPCs; first good answer wins"""
+async def eth_rpc_any(method, params, t=7, chain="eth"):
+    """race the chain's free RPCs; first good answer wins"""
     async def one(u):
         r = await rpc(u, method, params)
         if r is None: raise Exception("empty")
         return r
-    tasks = [asyncio.create_task(one(u)) for u in ETH_RPCS]
+    tasks = [asyncio.create_task(one(u)) for u in EVM[chain]["rpcs"]]
     try:
         for fut in asyncio.as_completed(tasks, timeout=t):
             try: return await fut
@@ -501,17 +532,19 @@ async def eth_rpc_any(method, params, t=7):
     finally:
         for x in tasks: x.cancel()
     return None
-async def _ethplorer_history(a, want_eth=True, want_tok=True):
-    """fallback history when Blockscout streams fail (ETH transfers + token transfers, last ~50 each)"""
+async def _ethplorer_history(a, want_eth=True, want_tok=True, base=None, unit="ETH"):
+    """fallback history when Blockscout streams fail (native transfers + token transfers, last ~50 each).
+    Ethplorer for Ethereum; Binplorer (same API, same public 'freekey') for BNB Smart Chain."""
+    base = base or ETHPLORER; nm = "Binplorer" if "binplorer" in base else "Ethplorer"
     al = a.lower(); edges = []; hist = []
     async def none(): return None
     (txs, _), (th, _) = await asyncio.gather(
-        _cap(get(f"{ETHPLORER}/getAddressTransactions/{al}", ttl=600, params={"apiKey": "freekey", "limit": 50}) if want_eth else none(), 8),
-        _cap(get(f"{ETHPLORER}/getAddressHistory/{al}", ttl=600, params={"apiKey": "freekey", "limit": 50, "type": "transfer"}) if want_tok else none(), 8))
+        _cap(get(f"{base}/getAddressTransactions/{al}", ttl=600, params={"apiKey": "freekey", "limit": 50}) if want_eth else none(), 8),
+        _cap(get(f"{base}/getAddressHistory/{al}", ttl=600, params={"apiKey": "freekey", "limit": 50, "type": "transfer"}) if want_tok else none(), 8))
     for t in (txs if isinstance(txs, list) else []):
         fr, too, v = t.get("from"), t.get("to"), float(t.get("value") or 0)
-        if fr and too: edges.append({"source": fr, "target": too, "amount": v, "tx": t.get("hash"), "unit": "ETH", "time": t.get("timestamp")})
-        hist.append({"tx": t.get("hash"), "time": t.get("timestamp"), "delta": v if (too or "").lower() == al else -v, "unit": "ETH", "status": "ok" if t.get("success", True) else "error", "method": "transfer (ethplorer)"})
+        if fr and too: edges.append({"source": fr, "target": too, "amount": v, "tx": t.get("hash"), "unit": unit, "time": t.get("timestamp")})
+        hist.append({"tx": t.get("hash"), "time": t.get("timestamp"), "delta": v if (too or "").lower() == al else -v, "unit": unit, "status": "ok" if t.get("success", True) else "error", "method": f"transfer ({nm.lower()})"})
     for t in ((th or {}).get("operations") or []):
         ti = t.get("tokenInfo") or {}; sym = ti.get("symbol") or "TOKEN"
         try: v = int(t.get("value") or 0) / 10 ** int(ti.get("decimals") or 0)
@@ -520,25 +553,26 @@ async def _ethplorer_history(a, want_eth=True, want_tok=True):
         except Exception: rate = None
         fr, too = t.get("from"), t.get("to")
         if fr and too: edges.append({"source": fr, "target": too, "amount": v, "tx": t.get("transactionHash"), "unit": sym, "time": t.get("timestamp"), "rate": rate})
-        hist.append({"tx": t.get("transactionHash"), "time": t.get("timestamp"), "delta": v if (too or "").lower() == al else -v, "unit": sym, "method": "token transfer (ethplorer)", "rate": rate})
+        hist.append({"tx": t.get("transactionHash"), "time": t.get("timestamp"), "delta": v if (too or "").lower() == al else -v, "unit": sym, "method": f"token transfer ({nm.lower()})", "rate": rate})
     return edges, hist, (isinstance(txs, list) or th is not None)
-async def eth_address(a, cursor=None, f=None, to=None, pages=1):
-    out = {"chain": "eth", "unit": "ETH", "address": a}
+async def evm_address(a, cursor=None, f=None, to=None, pages=1, chain="eth"):
+    a = evmcfg.bare(a); cfg = EVM[chain]; U = cfg["unit"]; BSU = _bs_base(chain); ka = a if chain == "eth" else f"{chain}:{a}"
+    out = {"chain": chain, "unit": U, "address": a, "chain_name": cfg["name"]}
     t0 = time.time(); DEADLINE = float(os.environ.get("CHAINTRACE_ETH_DEADLINE", "18")); miss = []; pending = []
     fast = FAST.get() and not cursor and not (f or to)   # interactive first page: soft deadline + background completion
     tm = {}; mark = lambda k: tm.setdefault(k, round(time.time() - t0, 2))
     prices = asyncio.create_task(ensure_prices())        # concurrent with the fetches (was a serial step before them)
     async def _bs_info(path, cap):
-        nk = f"{a}/{path or 'info'}"
-        if time.time() - NEG.get(nk, 0) < 600: return None
-        t = _bg_get(f"{BS}/addresses/{a}{path}", BS_TIMEOUT + 6 if fast else cap, ttl=900)   # same TTL as the first history page
+        nk = f"{ka}/{path or 'info'}"
+        if not BSU or time.time() - NEG.get(nk, 0) < 600: return None
+        t = _bg_get(f"{BSU}/addresses/{a}{path}", BS_TIMEOUT + 6 if fast else cap, ttl=900)   # same TTL as the first history page
         done, _ = await asyncio.wait({t}, timeout=cap)
         if not done: return None
         if t.cancelled() or t.exception() is not None: NEG[nk] = time.time(); return None
         return t.result()
     async def _hdr():
         # every source capped and concurrent; any of them may fail without failing the lookup
-        rpcs = asyncio.gather(eth_rpc_any("eth_getBalance", [a, "latest"]), eth_rpc_any("eth_getCode", [a, "latest"]), eth_rpc_any("eth_getTransactionCount", [a, "latest"]))
+        rpcs = asyncio.gather(eth_rpc_any("eth_getBalance", [a, "latest"], chain=chain), eth_rpc_any("eth_getCode", [a, "latest"], chain=chain), eth_rpc_any("eth_getTransactionCount", [a, "latest"], chain=chain))
         bsi = asyncio.ensure_future(asyncio.gather(_bs_info("", BS_TIMEOUT), _bs_info("/counters", min(6, BS_TIMEOUT))))
         bal, code, nonce = await rpcs; mark("rpc")
         if fast and bal and code is not None:   # RPC already gave balance/type; Blockscout info only adds the counters
@@ -551,13 +585,13 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
         else: info, cnt = await bsi
         mark("info")
         if info: out["address"] = info.get("hash") or a
-        elif not (fast and bal): miss.append("address info")
+        elif not (fast and bal) and BSU: miss.append("address info")
         if bal: out["balance"] = int(bal, 16) / 1e18; out["balance_source"] = "rpc"
         elif info: out["balance"] = int(info.get("coin_balance") or 0) / 1e18; out["balance_source"] = "blockscout"
         else: out["balance"] = None; out["balance_source"] = "unavailable"
         out["is_contract"] = info.get("is_contract") if info else (None if code is None else code not in ("0x", "0x0", ""))
         if cnt: out["tx_count"] = cnt.get("transactions_count"); out["token_transfers_count"] = cnt.get("token_transfers_count")
-        elif not (fast and nonce): miss.append("counters")
+        elif not (fast and nonce) and BSU: miss.append("counters")
         try: cval = int(out.get("tx_count") or 0)
         except Exception: cval = 0
         if nonce and int(nonce, 16) > cval:   # missing/stale Blockscout counter (total txs can't be below outgoing nonce) -> RPC nonce
@@ -570,13 +604,14 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
         if x and x.get("hash"): ntags.setdefault(x["hash"], _tags(x))
     failed = set(); spec = None
     if not cursor and not (f or to):
-        known_bad = any(time.time() - NEG.get(f"{a}/{p_}/None", 0) < 600 for p_ in ("transactions", "token-transfers"))
-        async def _spec():   # hedge: if Blockscout hasn't answered within HEDGE s, fetch the fallback in parallel (at once if it just failed)
-            await asyncio.sleep(0 if known_bad else (HEDGE if fast else 5)); return await _ethplorer_history(a, True, True)
+        known_bad = not BSU or any(time.time() - NEG.get(f"{ka}/{p_}/None", 0) < 600 for p_ in ("transactions", "token-transfers"))
+        async def _spec():   # hedge: if Blockscout hasn't answered within HEDGE s, fetch the fallback in parallel (at once if it just failed / no explorer)
+            await asyncio.sleep(0 if known_bad else (HEDGE if fast else 5)); return await _fallback_history(chain, a, True, True)
         spec = asyncio.create_task(_spec())
     for _ in range(max(1, pages)):
         caps = {"transactions": BS_STREAM_TIMEOUT, "token-transfers": BS_STREAM_TIMEOUT, "internal-transactions": 8}
-        st = {p_: _bs_start(a, p_, cur[k_], BS_STREAM_TIMEOUT + 8 if fast else caps[p_]) for p_, k_ in (("transactions", "t"), ("token-transfers", "k"), ("internal-transactions", "i"))}
+        if BSU: st = {p_: _bs_start(a, p_, cur[k_], BS_STREAM_TIMEOUT + 8 if fast else caps[p_], BSU, ka) for p_, k_ in (("transactions", "t"), ("token-transfers", "k"), ("internal-transactions", "i"))}
+        else: st = {"transactions": "neg", "token-transfers": "neg", "internal-transactions": "done"}   # no reachable explorer: keyless fallback only
         live = {t for t in st.values() if isinstance(t, asyncio.Task)}
         if fast and live:
             main = {st[p_] for p_ in ("transactions", "token-transfers") if st[p_] in live}
@@ -596,7 +631,7 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
                     await asyncio.wait({st[p_] for p_ in slow}, timeout=max(0, BS_STREAM_TIMEOUT - (time.time() - t0)))
         elif live: await asyncio.wait(live, timeout=max(caps.values()))
         mark("history")
-        (tx, ct, f1), (tt, ck, f2), (it, ci, f3) = [_bs_take(a, p_, cur[k_], st[p_]) for p_, k_ in (("transactions", "t"), ("token-transfers", "k"), ("internal-transactions", "i"))]
+        (tx, ct, f1), (tt, ck, f2), (it, ci, f3) = [_bs_take(ka, p_, cur[k_], st[p_]) for p_, k_ in (("transactions", "t"), ("token-transfers", "k"), ("internal-transactions", "i"))]
         for n_, fl in (("transactions", f1), ("token transfers", f2), ("internal transactions", f3)):
             if fl == "failed": failed.add(n_)
             elif fl == "pending":
@@ -608,8 +643,8 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
             if not _inrange(ts, f, to): continue
             v = int(t.get("value") or 0) / 1e18
             fl = (["zero"] if not v else []) + (["approval"] if APPROVE.search(t.get("method") or "") else [])
-            if fr and too: edges.append({"source": fr["hash"], "target": too["hash"], "amount": v, "tx": t["hash"], "unit": "ETH", "time": ts, "flags": fl})
-            hist.append({"tx": t["hash"], "time": ts, "delta": v if (too and too["hash"].lower()==al) else -v, "unit": "ETH", "method": t.get("method"), "status": t.get("status"), "flags": fl})
+            if fr and too: edges.append({"source": fr["hash"], "target": too["hash"], "amount": v, "tx": t["hash"], "unit": U, "time": ts, "flags": fl})
+            hist.append({"tx": t["hash"], "time": ts, "delta": v if (too and too["hash"].lower()==al) else -v, "unit": U, "method": t.get("method"), "status": t.get("status"), "flags": fl})
         for t in tt:
             fr, too = t.get("from"), t.get("to"); reg(fr); reg(too); ts = ts_of(t.get("timestamp")); times.append(ts)
             if not _inrange(ts, f, to): continue
@@ -626,8 +661,8 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
             fr, too = t.get("from"), t.get("to"); reg(fr); reg(too); ts = ts_of(t.get("timestamp")); times.append(ts)
             v = int(t.get("value") or 0) / 1e18
             if not v or not _inrange(ts, f, to): continue
-            if fr and too: edges.append({"source": fr["hash"], "target": too["hash"], "amount": v, "tx": t.get("transaction_hash"), "unit": "ETH", "time": ts, "internal": True})
-            hist.append({"tx": t.get("transaction_hash"), "time": ts, "delta": v if (too and too["hash"].lower()==al) else -v, "unit": "ETH", "method": "internal"})
+            if fr and too: edges.append({"source": fr["hash"], "target": too["hash"], "amount": v, "tx": t.get("transaction_hash"), "unit": U, "time": ts, "internal": True})
+            hist.append({"tx": t.get("transaction_hash"), "time": ts, "delta": v if (too and too["hash"].lower()==al) else -v, "unit": U, "method": "internal"})
         times = [x for x in times if x]
         done = all(v == "done" for v in cur.values())
         if f and times and max(times) < f: done = True
@@ -636,16 +671,16 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
     if ({"transactions", "token transfers"} & (failed | set(pending))) and not cursor and not (f or to):
         we, wt = "transactions" in (failed | set(pending)), "token transfers" in (failed | set(pending))
         if spec:
-            try: e2_, h2_, ok = await asyncio.wait_for(spec, 9)
-            except Exception: e2_, h2_, ok = [], [], False
+            try: e2_, h2_, ok, fsrc = await asyncio.wait_for(spec, 12)
+            except Exception: e2_, h2_, ok, fsrc = [], [], False, None
             keep = lambda h_: (we and "token" not in (h_.get("method") or "")) or (wt and "token" in (h_.get("method") or ""))
-            e2_ = [e for e in e2_ if (we and e["unit"] == "ETH") or (wt and e["unit"] != "ETH")]; h2_ = [h_ for h_ in h2_ if keep(h_)]
+            e2_ = [e for e in e2_ if (we and e["unit"] == U) or (wt and e["unit"] != U)]; h2_ = [h_ for h_ in h2_ if keep(h_)]
             spec = None
-        else: e2_, h2_, ok = await _ethplorer_history(a, we, wt)
-        what = " + ".join(x for x, w in (("ETH transfers", we), ("token transfers", wt)) if w)
+        else: e2_, h2_, ok, fsrc = await _fallback_history(chain, a, we, wt)
+        what = " + ".join(x for x, w in ((f"{U} transfers", we), ("token transfers", wt)) if w)
         cs = {x.lower(): x for e in edges for x in (e["source"], e["target"])}   # reuse checksum forms seen from Blockscout
         for e in e2_: e["source"] = cs.get(e["source"].lower(), e["source"]); e["target"] = cs.get(e["target"].lower(), e["target"])
-        if ok: edges += e2_; hist += h2_; out["history_source"] = f"{what} from Ethplorer (fallback, last ~50)"; mark("ethplorer")
+        if ok: edges += e2_; hist += h2_; out["history_source"] = f"{what} from {fsrc}"; mark("fallback")
         else: out["history_source"] = f"{what} unavailable"
     if spec: spec.cancel()
     if hdr:
@@ -655,6 +690,12 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
     try: await asyncio.wait_for(asyncio.shield(prices), 5)
     except Exception: pass
     mark("prices")
+    if BSU and chain != "eth" and _bs_base(chain) != BSU and not cursor: BSU = None   # the explorer refused us during this lookup (bot protection)
+    if not BSU:   # no explorer for this chain right now: the keyless fallback *is* the source (not a failure); no explorer cursor
+        failed -= {"transactions", "token transfers"}; pending = [x for x in pending if x not in ("transactions", "token transfers")]
+        out["explorer"] = None; out["history_note"] = _NOBS_NOTE.get(cfg["fallback"], "")
+        cur = {"t": "done", "k": "done", "i": "done"}
+    else: out["explorer"] = BSU.split("/api/v2")[0]
     # canonical address: from Blockscout info, else the checksummed form seen in edges, else as typed
     if not out.get("address") or out["address"] == a:
         seen = next((x for e in edges for x in (e["source"], e["target"]) if x.lower() == al and x != al), None)
@@ -663,16 +704,24 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
     for e in edges:   # unify case of the focus address across sources
         if e["source"].lower() == al: e["source"] = a
         if e["target"].lower() == al: e["target"] = a
+    if chain in EVM_NEW:   # chain-prefixed graph ids ("base:0x…"), checksummed so every source agrees
+        from keccak import to_checksum
+        cs_ = lambda x: evmcfg.nid(chain, to_checksum(x) if re.fullmatch(r"0x[0-9a-fA-F]{40}", x or "") else x)
+        try: out["address_bare"] = to_checksum(a)
+        except Exception: out["address_bare"] = a
+        for e in edges: e["source"], e["target"] = cs_(e["source"]), cs_(e["target"])
+        ntags = {cs_(k): v for k, v in ntags.items()}; a = out["address"] = cs_(a)
     try:
         import swaps   # likely DEX swaps (sent one asset, received another in the same tx): the client asks /api/eth/swaps to decode them
         out["swap_candidates"] = swaps.candidates(a, edges)
     except Exception: pass
-    out["nodes"], out["edges"], out["txs"] = _finish_page("eth", a, edges, hist, ntags); out["cp"] = CP_LAST[0]
+    out["nodes"], out["edges"], out["txs"] = _finish_page(chain, a, edges, hist, ntags); out["cp"] = CP_LAST[0]
     out["next"] = None if all(v == "done" for v in cur.values()) or (f and done) else enc(cur)
     mark("built"); out["timing"] = tm
+    if out.get("history_note"): out["warnings"] = [out["history_note"]]
     if pending:   # still loading from Blockscout in the background; the client re-requests shortly and gets the cached result
         out["pending"] = pending; out["partial"] = True
-        out["warnings"] = [f"Still loading {', '.join(pending)} from Blockscout; this view refreshes automatically"
+        out["warnings"] = (out.get("warnings") or []) + [f"Still loading {', '.join(pending)} from Blockscout; this view refreshes automatically"
                            + (f" (meanwhile {out['history_source']})" if out.get("history_source") else "")]
     if failed or miss:
         out["partial"] = True
@@ -680,6 +729,10 @@ async def eth_address(a, cursor=None, f=None, to=None, pages=1):
                            + (f" — history from {out['history_source']}" if out.get("history_source") else "")]
     return out
 
+async def eth_address(a, cursor=None, f=None, to=None, pages=1): return await evm_address(a, cursor, f, to, pages, "eth")
+_NOBS_NOTE = {"binplorer": "History from Binplorer (BSC twin of Ethplorer, public free key): last ~50 BNB and ~50 token transfers; internal transfers not included",
+              "logs": "Explorer API not reachable without a key: history is a recent-window scan of major-token transfers from public RPC logs"
+                      " (native-coin transfers not visible except on Polygon). Set BLOCKSCOUT_API_KEY (free) for full history."}
 async def sol_address(a, cursor=None, f=None, to=None, pages=1, limit=15):
     out = {"chain": "sol", "address": a, "unit": "SOL"}; t0 = time.time(); await ensure_prices()
     if not cursor:
@@ -982,6 +1035,171 @@ async def xrp_tx(h):
             "nodes": list(nodes.values()), "edges": edges,
             "destination_tag": (wrapped["tx"] or {}).get("DestinationTag")}
 
+
+# ---------------- EVM chains beyond Ethereum: keyless fallbacks, RPC tx decoding, tx-chain detection, all-EVM scan ----------------
+BINPLORER = "https://api.binplorer.com"
+T_TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+def _pad(a): return "0x" + "0" * 24 + a.lower()[2:]
+def _a32(w): return "0x" + w[-40:].lower()
+async def _fallback_history(chain, a, want_native=True, want_tok=True):
+    """-> (edges, hist, ok, source description)"""
+    if chain == "eth":
+        e_, h_, ok = await _ethplorer_history(a, want_native, want_tok); return e_, h_, ok, "Ethplorer (fallback, last ~50)"
+    if chain == "bsc":
+        e_, h_, ok = await _ethplorer_history(a, want_native, want_tok, base=BINPLORER, unit="BNB"); return e_, h_, ok, "Binplorer (last ~50 each)"
+    return await _logscan(chain, a, want_native, want_tok)
+async def _rpc1(u, method, params, ttl=None, t=8):
+    try: return await asyncio.wait_for(rpc(u, method, params, ttl=ttl), t)
+    except Exception as ex: return ex
+_BTS = {}
+async def block_ts(chain, bn):
+    k = (chain, bn)
+    if k in _BTS: return _BTS[k]
+    b = await eth_rpc_any("eth_getBlockByNumber", [hex(bn), False], 6, chain=chain)
+    ts = int(b["timestamp"], 16) if b else None
+    if ts: _BTS[k] = ts
+    if len(_BTS) > 20000: _BTS.clear()
+    return ts
+async def _logscan(chain, a, want_native=True, want_tok=True):
+    """keyless recent-window history: ERC-20 Transfer logs of the chain's major tokens to/from `a` (+ Polygon native POL LogTransfer),
+    over a few block windows of the RPC's maximum range. Lead-grade coverage only (recent, major tokens); times read from block headers."""
+    cfg = EVM[chain]; L = cfg.get("logs")
+    if not L: return [], [], False, "no keyless history source"
+    u = L["rpc"]; span = L["span"]; toks = list(evmcfg.TOKENS.get(chain, {}))
+    bn = await eth_rpc_any("eth_blockNumber", [], 6, chain=chain)
+    if not bn: return [], [], False, "RPC unavailable"
+    bn = int(bn, 16); top = bn // span * span; wins = [(top, bn)] + [(top - (i + 1) * span, top - i * span - 1) for i in range(L["windows"] - 1)]
+    pa = _pad(a); qs = []
+    for lo, hi in wins:
+        ttl = LONG if hi < top else 60
+        rng = {"fromBlock": hex(lo), "toBlock": hex(hi)}
+        if want_tok:
+            qs.append((ttl, {**rng, "address": toks, "topics": [T_TRANSFER, pa]}))
+            qs.append((ttl, {**rng, "address": toks, "topics": [T_TRANSFER, None, pa]}))
+        if want_native and chain == "polygon":
+            qs.append((ttl, {**rng, "address": evmcfg.POLYGON_MRC20, "topics": [evmcfg.T_LOGTRANSFER, None, pa]}))
+            qs.append((ttl, {**rng, "address": evmcfg.POLYGON_MRC20, "topics": [evmcfg.T_LOGTRANSFER, None, None, pa]}))
+    res = await asyncio.gather(*[_rpc1(u, "eth_getLogs", [q], ttl=ttl, t=12) for ttl, q in qs])
+    logs, errs = {}, 0
+    for r in res:
+        if isinstance(r, Exception) or not isinstance(r, list): errs += 1; continue
+        for l in r: logs[(l.get("transactionHash"), l.get("logIndex"))] = l
+    if errs == len(qs): return [], [], False, f"RPC log scan failed ({type(res[0]).__name__ if res else '?'})"
+    blocks = sorted({int(l["blockNumber"], 16) for l in logs.values()}, reverse=True)
+    exact = blocks[:40]
+    tsl = await asyncio.gather(*[block_ts(chain, b) for b in exact], return_exceptions=True)
+    bts = {b: t for b, t in zip(exact, tsl) if isinstance(t, int)}
+    try: now_ts = await block_ts(chain, bn)
+    except Exception: now_ts = int(time.time())
+    btime = (cfg.get("block_time") or {"bsc": 0.75, "arb": 0.25, "base": 2, "polygon": 2, "op": 2}.get(chain, 2))
+    edges, hist = [], []; al = a.lower(); toks_info = evmcfg.TOKENS.get(chain, {})
+    for l in sorted(logs.values(), key=lambda l: (-int(l["blockNumber"], 16), -int(l.get("logIndex") or "0x0", 16))):
+        tp = l.get("topics") or []; b = int(l["blockNumber"], 16)
+        ts = bts.get(b); approx = ts is None
+        if approx: ts = int((now_ts or time.time()) - (bn - b) * btime)
+        if tp[0] == T_TRANSFER and len(tp) == 3:
+            sym, dec = toks_info.get(l["address"].lower(), ("TOKEN", 18)); fr, too = _a32(tp[1]), _a32(tp[2])
+            v = int(l.get("data") or "0x0", 16) / 10 ** dec; m = "token transfer (RPC logs)"
+        elif tp[0] == evmcfg.T_LOGTRANSFER and len(tp) == 4:
+            sym = cfg["unit"]; fr, too = _a32(tp[2]), _a32(tp[3]); v = int((l.get("data") or "0x")[2:66] or "0", 16) / 1e18; m = "native transfer (RPC logs)"
+        else: continue
+        e = {"source": fr, "target": too, "amount": v, "tx": l.get("transactionHash"), "unit": sym, "time": ts, "flags": [] if v else ["zero"]}
+        if approx: e["time_approx"] = True
+        edges.append(e)
+        hist.append({"tx": l.get("transactionHash"), "time": ts, "delta": v if too == al else -v, "unit": sym, "method": m + (" · time approx." if approx else ""), "flags": e["flags"]})
+    days = round(len(wins) * span * btime / 86400, 1)
+    return edges, hist, True, f"public RPC log scan (last ~{days} days, major tokens{' + native POL' if chain == 'polygon' else ''}; lead-grade)"
+async def evm_tx(h, chain):
+    """any EVM chain, keyless: public RPC tx + receipt logs (native value, ERC-20 transfers, Polygon native LogTransfer) + DEX swap decode"""
+    import swaps
+    from keccak import to_checksum
+    h = h.lower() if h.startswith("0x") else "0x" + h.lower(); cfg = EVM[chain]; U = cfg["unit"]
+    tx, rc = await asyncio.gather(eth_rpc_any("eth_getTransactionByHash", [h], 8, chain=chain), eth_rpc_any("eth_getTransactionReceipt", [h], 8, chain=chain))
+    if not tx: raise Exception(f"transaction not found on {cfg['name']}")
+    ts = await block_ts(chain, int(tx["blockNumber"], 16)) if tx.get("blockNumber") else None
+    cs = lambda x: evmcfg.nid(chain, to_checksum(x)) if x else None
+    tid = "tx:" + h; nodes = {tid: {"id": tid, "chain": chain, "kind": "tx", "name": f"{cfg['short']} tx {h[:10]}", "tags": [], "risk": 0}}; edges = []
+    fr, to = cs(tx.get("from")), cs(tx.get("to") or (rc or {}).get("contractAddress"))
+    for x in (fr, to):
+        if x: nodes[x] = node(chain, x)
+    v = int(tx.get("value") or "0x0", 16) / 1e18
+    if fr: edges.append({"source": fr, "target": tid, "amount": v, "unit": U, "tx": h, "time": ts})
+    if to: edges.append({"source": tid, "target": to, "amount": v, "unit": U, "tx": h, "time": ts})
+    for l in (rc or {}).get("logs") or []:
+        tp = l.get("topics") or []
+        if not tp: continue
+        if tp[0] == T_TRANSFER and len(tp) == 3:
+            sym, dec = await swaps.token(l["address"], chain); a_, b_ = cs(_a32(tp[1])), cs(_a32(tp[2]))
+            val = int(l.get("data") or "0x0", 16) / 10 ** dec
+        elif chain == "polygon" and tp[0] == evmcfg.T_LOGTRANSFER and len(tp) == 4:
+            sym = U; a_, b_ = cs(_a32(tp[2])), cs(_a32(tp[3])); val = int((l.get("data") or "0x")[2:66] or "0", 16) / 1e18
+            if val == v and a_ == fr and b_ == to: continue   # the top-level value transfer itself
+        else: continue
+        for x in (a_, b_): nodes.setdefault(x, node(chain, x))
+        edges.append({"source": a_, "target": b_, "amount": val, "unit": sym, "tx": h, "time": ts})
+    fee = None
+    try:
+        fee = int(rc["gasUsed"], 16) * int(rc.get("effectiveGasPrice") or tx.get("gasPrice") or "0x0", 16) / 1e18
+        if rc.get("l1Fee"): fee += int(rc["l1Fee"], 16) / 1e18   # OP-stack L1 data fee
+    except Exception: pass
+    sw = None
+    try:
+        sw = await asyncio.wait_for(swaps.decode(h, None, chain), 9)
+        if sw:
+            canon = {evmcfg.bare(k).lower(): k for k in nodes}
+            sn, se = swaps.graph(sw, canon, tid, chain)
+            nodes[tid].update(kind="swap", name=sn[0]["name"], swap=sw)
+            for n_ in sn[1:]: nodes.setdefault(n_["id"], n_)
+            keys = {(e["source"], e["target"], e["unit"]) for e in se}
+            edges = [e for e in edges if (e["source"], e["target"], e["unit"]) not in keys] + se
+    except Exception: sw = None
+    st = (rc or {}).get("status")
+    return {"chain": chain, "chain_name": cfg["name"], "tx": h, "time": ts, "status": "ok" if st in ("0x1", 1) else ("pending" if not rc else "error"),
+            "method": (tx.get("input") or "0x")[:10] if (tx.get("input") or "0x") != "0x" else "transfer", "fee": fee, "unit": U,
+            "nodes": list(nodes.values()), "edges": edges, "swaps": [sw] if sw else [], "source": f"{cfg['name']} public RPC (tx + receipt logs)"}
+_TXCH = {}
+async def detect_tx_chains(h, t=6):
+    """which EVM chains know this tx hash (raced over each chain's public RPCs)"""
+    h = h.lower() if h.startswith("0x") else "0x" + h.lower()
+    if h in _TXCH: return _TXCH[h]
+    async def one(c):
+        try: r = await eth_rpc_any("eth_getTransactionByHash", [h], t, chain=c); return c if r else None
+        except Exception: return None
+    found = [c for c in await asyncio.gather(*[one(c) for c in EVM_CHAINS]) if c]
+    if found: _TXCH[h] = found
+    return found
+async def evm_scan(a, t=6):
+    """balance / outgoing-tx count / contract code per EVM chain (+ explorer counters where reachable): which chains show activity"""
+    a = evmcfg.bare(a); await ensure_prices()
+    async def one(c):
+        cfg = EVM[c]
+        bal, nonce, code = await asyncio.gather(eth_rpc_any("eth_getBalance", [a, "latest"], t, chain=c), eth_rpc_any("eth_getTransactionCount", [a, "latest"], t, chain=c),
+                                                eth_rpc_any("eth_getCode", [a, "latest"], t, chain=c))
+        row = {"chain": c, "name": cfg["name"], "short": cfg["short"], "unit": cfg["unit"], "color": cfg["color"],
+               "balance": int(bal, 16) / 1e18 if bal else None, "nonce": int(nonce, 16) if nonce else None,
+               "is_contract": (code not in ("0x", "0x0", "")) if code is not None else None, "tx_count": None, "token_transfers": None,
+               "q": evmcfg.nid(c, a), "explorer_url": cfg["ad"] + a, "rpc_ok": bal is not None}
+        b = _bs_base(c)
+        if b:
+            d, _ = await _cap(get(f"{b}/addresses/{a}/counters", ttl=600), 4)
+            if d: row["tx_count"] = int(d.get("transactions_count") or 0); row["token_transfers"] = int(d.get("token_transfers_count") or 0); row["counts_source"] = "Blockscout"
+        elif c == "bsc":
+            d, _ = await _cap(get(f"{BINPLORER}/getAddressInfo/{a.lower()}", ttl=600, params={"apiKey": "freekey"}), 5)
+            if d and "countTxs" in d: row["tx_count"] = int(d.get("countTxs") or 0); row["counts_source"] = "Binplorer"; row["tokens_held"] = len(d.get("tokens") or [])
+        row["balance_usd"] = usd_of(row["balance"], cfg["unit"])
+        row["active"] = bool((row["nonce"] or 0) > 0 or (row["balance"] or 0) > 0 or (row["tx_count"] or 0) > 0 or (row["token_transfers"] or 0) > 0 or row.get("tokens_held"))
+        return row
+    rows = await asyncio.gather(*[one(c) for c in EVM_CHAINS])
+    return {"address": a, "chains": rows, "active": [r["chain"] for r in rows if r["active"]],
+            "note": "Activity = balance, outgoing transactions (nonce) or explorer counters > 0. An address that only ever received tokens may show no nonce; "
+                    "explorer counters cover that where reachable. The same 0x address on two chains is controlled by the same key only if it is an EOA (not a contract)."}
+def _mk_addr(c):
+    async def f(a, cursor=None, f=None, to=None, pages=1): return await evm_address(a, cursor, f, to, pages, c)
+    f.__name__ = f"{c}_address"; return f
+def _mk_tx(c):
+    async def f(h): return await evm_tx(evmcfg.bare(h).removeprefix("tx:"), c)
+    f.__name__ = f"{c}_tx"; return f
+
 # wire paginated fetchers (overrides any earlier ADDR stubs)
-ADDR = {"btc": btc_address, "eth": eth_address, "sol": sol_address, "tron": tron_address, "xrp": xrp_address}
-TX = {"btc": btc_tx, "eth": eth_tx, "sol": sol_tx, "tron": tron_tx, "xrp": xrp_tx}
+ADDR = {"btc": btc_address, "eth": eth_address, "sol": sol_address, "tron": tron_address, "xrp": xrp_address, **{c: _mk_addr(c) for c in EVM_NEW}}
+TX = {"btc": btc_tx, "eth": eth_tx, "sol": sol_tx, "tron": tron_tx, "xrp": xrp_tx, **{c: _mk_tx(c) for c in EVM_NEW}}

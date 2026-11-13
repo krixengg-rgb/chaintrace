@@ -129,9 +129,9 @@ def download():
 def build(include_unclear=False):
     rows = []
     def add(chain, addr, category, name, source, url=None, conf=None, entity=None):
-        if not addr or chain not in ("btc", "eth", "sol", "tron", "xrp"): return
+        if not addr or chain not in ("btc", "eth", "sol", "tron", "xrp", "bsc", "arb", "base", "polygon", "op"): return
         addr = addr.strip().strip("'\"")
-        if chain == "eth":
+        if chain in ("eth", "bsc", "arb", "base", "polygon", "op"):
             if not re.fullmatch(r"0x[0-9a-fA-F]{40}", addr): return
             addr = addr.lower()
         if not SOURCES[source][4] and not include_unclear: return
@@ -146,6 +146,15 @@ def build(include_unclear=False):
     for c, d in L.EXCH.items():
         for a, n in d.items(): add(c, a, "exchange", n, "builtin", entity=n.split()[0])
     for a, n in L.MIXERS_ETH.items(): add("eth", a, "mixer", n, "builtin", entity="Tornado Cash")
+    # canonical L2 bridge / system contracts on the L2 side (public chain docs); Ethereum-side gateways already come from the label datasets
+    for ch, a, n in (("op", "0x4200000000000000000000000000000000000010", "OP Mainnet: L2StandardBridge (canonical bridge)"),
+                     ("op", "0x4200000000000000000000000000000000000016", "OP Mainnet: L2ToL1MessagePasser (canonical bridge)"),
+                     ("base", "0x4200000000000000000000000000000000000010", "Base: L2StandardBridge (canonical bridge)"),
+                     ("base", "0x4200000000000000000000000000000000000016", "Base: L2ToL1MessagePasser (canonical bridge)"),
+                     ("arb", "0x5288c571fd7ad117bea99bf60fe0846c4e84f933", "Arbitrum One: L2 Gateway Router (canonical bridge)"),
+                     ("arb", "0x0000000000000000000000000000000000000064", "Arbitrum One: ArbSys (canonical withdrawals)"),
+                     ("polygon", "0xa6fa4fb5f76172d178d61b04b0ecd319c5d1c0aa", "Polygon PoS: ChildChainManager (canonical bridge)")):
+        add(ch, a, "bridge", n, "builtin", entity=n.split(":")[0])
     for c, d in getattr(L, "HACK", {}).items():
         for a, n in d.items(): add(c, a, "hack", n, "builtin", entity="Binance hack 2026", conf=0.9)
     # GraphSense
@@ -165,12 +174,15 @@ def build(include_unclear=False):
             add(ch, str(t.get("address")), cat, lab, "graphsense", t.get("source") or p.get("source") or f"graphsense pack {os.path.basename(f)}", conf,
                 entity=t.get("actor") or p.get("actor") or lab)
     # dawsbot
+    DCH = {"1": "eth", "56": "bsc", "42161": "arb", "8453": "base", "137": "polygon", "10": "op"}   # explorer-derived labels per EVM chain
     for r in csv.DictReader(open(os.path.join(SRC, "dawsbot_accounts.csv"))):
-        if r["chainId"] != "1": continue
+        ch = DCH.get(r["chainId"])
+        if not ch: continue
         slug = r["label"]
         if slug == "blocked": continue   # Etherscan 'blocked' tag mostly marks token contracts, not frozen holders
+        if slug in ("friend-tech-users", "retropgf-recipient", "delegate", "pimlico"): continue   # social / governance lists, not attribution
         c = cat_of(slug) if slug not in ("ofac-sanctions-lists",) else ("mixer" if "tornado" in r["nameTag"].lower() else "blocklisted")
-        add("eth", r["address"], c, r["nameTag"] or slug, "dawsbot", entity=slug)
+        add(ch, r["address"], c, r["nameTag"] or slug, "dawsbot", entity=slug)
     # brianleect etherscan-labels
     for a, v in json.load(open(os.path.join(SRC, "es_accounts.json"))).items():
         ls = [x for x in v.get("labels", []) if x not in ("take-action", "old-contract", "deprecated", "v2", "blocked")]

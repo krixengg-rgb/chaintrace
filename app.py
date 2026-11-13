@@ -95,13 +95,20 @@ app.add_middleware(GZipMiddleware, minimum_size=2000)   # 50-75 KB lookup JSON -
 async def lookup(q: str, chain: str | None = None, cursor: str | None = None, date_from: int | None = None, date_to: int | None = None):
     if _t.time() - bridges._vts[0] > 3600: asyncio.create_task(bridges.refresh_vaults())
     if screen.stale() and not screen.S["refreshing"] and os.environ.get("CHAINTRACE_SANCTIONS_REFRESH", "1") != "0" and _t.time() - _BOOT > 120: asyncio.create_task(screen.refresh_if_stale())
-    c, kind = chains.detect(q)
-    if chain and chain in chains.ADDR:
+    c, kind = chains.detect(q, chain)
+    if chain and chain in chains.ADDR and chain not in chains.EVM:
         if kind == "tx" or (not c):
             c = chain; kind = kind or "address"
         elif kind == "address" and chain != c:
             c = chain
     if not c: raise HTTPException(400, "Unrecognised address / tx hash")
+    also = None
+    if kind == "tx" and c == "eth" and not chain and chains.evmcfg.split(q)[0] is None:
+        # a 0x tx hash could be on any EVM chain: ask each chain's public RPC (cached); Ethereum wins ties
+        try: found = await asyncio.wait_for(chains.detect_tx_chains(q.strip().removeprefix("tx:")), 7)
+        except Exception: found = []
+        if found and "eth" not in found: c = found[0]
+        also = found or None
     try:
         if kind == "address":
             tok = chains.FAST.set(True)   # interactive: soft deadline, slow Blockscout streams finish in the background
@@ -113,6 +120,7 @@ async def lookup(q: str, chain: str | None = None, cursor: str | None = None, da
     except asyncio.TimeoutError: raise HTTPException(504, f"{c} data sources too slow right now (>{LOOKUP_TIMEOUT:.0f}s); please retry")
     except Exception as e: raise HTTPException(502, f"{c} upstream error: {e}")
     d["kind"] = kind; t1 = _t.time(); warm = await _warm_wait(); d = finish(d)
+    if also: d["found_on"] = also
     if not warm and d.get("chain") in deposits.NATIVE:   # inferred-label store still building after a cold start: client auto-refreshes
         d["pending"] = (d.get("pending") or []) + ["suggested labels"]; d["partial"] = True
         d["warnings"] = (d.get("warnings") or []) + ["Suggested deposit labels still loading after a restart; this view refreshes automatically"]
@@ -125,9 +133,9 @@ def _cp_sugg(c, cps):
             s = deposits.lookup_batch(c, x["id"])
             if s: x["suggested"] = {"label": f"{s['entity']} deposit", "entity": s["entity"], "category": "exchange-deposit", "confidence": s["confidence"], "method": s["method"]}
 @app.get("/api/counterparties")
-async def counterparties(q: str, pages: int = 1, cursor: str | None = None, date_from: int | None = None, date_to: int | None = None):
+async def counterparties(q: str, pages: int = 1, cursor: str | None = None, date_from: int | None = None, date_to: int | None = None, chain: str | None = None):
     """top inflow/outflow counterparties of an address over 1-5 history pages (bounded by a 20s budget)"""
-    c, kind = chains.detect(q)
+    c, kind = chains.detect(q, chain); q = chains.evmcfg.nid(c, q.strip()) if c in chains.EVM_NEW else q
     if not c or kind != "address": raise HTTPException(400, "counterparties need an address")
     pages = max(1, min(5, pages)); t0 = _t.time(); res = {"counterparties": [], "series": []}; nxt = cursor; n = 0; partial = []
     while n < pages and _t.time() - t0 < 18:
@@ -140,8 +148,8 @@ async def counterparties(q: str, pages: int = 1, cursor: str | None = None, date
     _cp_sugg(c, res["counterparties"])
     return {"chain": c, "address": q.strip(), "pages": n, "next": nxt, "warnings": partial, **res}
 @app.post("/api/trace")
-async def trace_start(q: str, hops: int = 2, direction: str = "forward", topk: int = 3, max_nodes: int = 120):
-    c, kind = chains.detect(q)
+async def trace_start(q: str, hops: int = 2, direction: str = "forward", topk: int = 3, max_nodes: int = 120, chain: str | None = None):
+    c, kind = chains.detect(q, chain); q = chains.evmcfg.nid(c, q.strip()) if c in chains.EVM_NEW else q
     if not c: raise HTTPException(400, "Unrecognised address / tx hash")
     hops = max(1, min(5, hops)); topk = max(1, min(10, topk)); max_nodes = max(10, min(400, max_nodes))
     if direction not in ("forward", "backward", "both"): raise HTTPException(400, "bad direction")
@@ -150,8 +158,8 @@ async def trace_start(q: str, hops: int = 2, direction: str = "forward", topk: i
     return {"job": trace.start(q.strip(), hops, direction, topk, max_nodes)}
 @app.post("/api/autotrace")
 async def autotrace_start(q: str, direction: str = "forward", max_hops: int = 6, max_nodes: int = 150, max_secs: int = 120,
-                          min_usd: float = 100, topk: int = 3, skip_unpriced: bool = True, follow_bridges: bool = False, follow_change: bool = False):
-    c, kind = chains.detect(q)
+                          min_usd: float = 100, topk: int = 3, skip_unpriced: bool = True, follow_bridges: bool = False, follow_change: bool = False, chain: str | None = None):
+    c, kind = chains.detect(q, chain); q = chains.evmcfg.nid(c, q.strip()) if c in chains.EVM_NEW else q
     if not c: raise HTTPException(400, "Unrecognised address / tx hash")
     if direction not in ("forward", "backward"): raise HTTPException(400, "direction must be forward or backward")
     max_hops = max(1, min(8, max_hops)); max_nodes = max(10, min(250, max_nodes)); max_secs = max(15, min(240, max_secs))
@@ -173,10 +181,11 @@ async def bridge(q: str | None = None, tx: str | None = None, chain: str | None 
     """Cross-chain match for a bridge transaction (either side) or an address's bridge activity.
     Deterministic = linked by the bridge's own indexer (message/order id). Heuristic = amount/time/same-address lead only."""
     q = (q or tx or "").strip()
-    c, kind = chains.detect(q)
+    c, kind = chains.detect(q, chain)
     if not c: raise HTTPException(400, "Give a transaction hash (ETH/BTC/SOL) or an address")
+    q = chains.evmcfg.bare(q).removeprefix("tx:")
     try:
-        if kind == "tx": d = await asyncio.wait_for(bridges.match_tx(q, None, "always" if heuristic == "always" else heuristic.lower() not in ("false", "0", "off", "no")), LOOKUP_TIMEOUT - 1)
+        if kind == "tx": d = await asyncio.wait_for(bridges.match_tx(q, c if c in chains.EVM_NEW else None, "always" if heuristic == "always" else heuristic.lower() not in ("false", "0", "off", "no")), LOOKUP_TIMEOUT - 1)
         else: d = await asyncio.wait_for(bridges.match_address(q, c), LOOKUP_TIMEOUT - 1)
     except asyncio.TimeoutError: raise HTTPException(504, f"bridge indexers too slow right now (>{LOOKUP_TIMEOUT - 1:.0f}s); please retry")
     except ValueError as e: raise HTTPException(400, str(e))
@@ -260,14 +269,17 @@ async def eth_swaps(request: Request):
     except Exception: raise HTTPException(400, "body must be JSON")
     import re as _re, swaps
     txs = [h for h in (p.get("txs") or []) if isinstance(h, str) and _re.fullmatch(r"0x[0-9a-fA-F]{64}", h)][:12]
-    tr = p.get("trader") if isinstance(p.get("trader"), str) and _re.fullmatch(r"0x[0-9a-fA-F]{40}", p.get("trader") or "") else None
+    tr0 = p.get("trader") if isinstance(p.get("trader"), str) else ""
+    pc, trb = chains.evmcfg.split(tr0)
+    chain = p.get("chain") if p.get("chain") in chains.EVM else (pc or "eth")
+    tr = trb if _re.fullmatch(r"0x[0-9a-fA-F]{40}", trb or "") else None
     if not txs: return {"swaps": [], "nodes": [], "edges": []}
     await chains.ensure_prices()
-    res = await swaps.decode_many(txs, tr, budget=min(22, LOOKUP_TIMEOUT - 3))
+    res = await swaps.decode_many(txs, tr, budget=min(22, LOOKUP_TIMEOUT - 3), chain=chain)
     nodes, edges = {}, []
-    canon = {tr.lower(): tr} if tr else {}
+    canon = {tr.lower(): chains.evmcfg.nid(chain, tr0 if pc else tr)} if tr else {}
     for sw in res:
-        n_, e_ = swaps.graph(sw, canon)
+        n_, e_ = swaps.graph(sw, canon, None, chain)
         for x in n_: nodes.setdefault(x["id"], x)
         edges += e_
     return {"swaps": res, "nodes": list(nodes.values()), "edges": edges, "asked": len(txs)}
@@ -345,6 +357,32 @@ async def screen_batch(request: Request):
     return {"rows": rows, "summary": summ, "screened_at": int(_t.time()), **_lists_meta()}
 @app.get("/api/screen/status")
 def screen_status(): return screen.status()
+@app.get("/api/evm/scan")
+async def evm_scan(addr: str):
+    """which EVM chains (Ethereum, BNB Smart Chain, Arbitrum One, Base, Polygon PoS, OP Mainnet) show activity for a 0x address"""
+    import re as _re
+    a = chains.evmcfg.bare(addr.strip())
+    if not _re.fullmatch(r"0x[0-9a-fA-F]{40}", a): raise HTTPException(400, "give a 0x address")
+    try: return await asyncio.wait_for(chains.evm_scan(a), LOOKUP_TIMEOUT - 5)
+    except asyncio.TimeoutError: raise HTTPException(504, "chain RPCs too slow right now; retry")
+@app.get("/api/evm/detect")
+async def evm_detect(tx: str):
+    """which EVM chains know this 0x transaction hash"""
+    import re as _re
+    h = chains.evmcfg.bare(tx.strip()).removeprefix("tx:")
+    if not _re.fullmatch(r"0x[0-9a-fA-F]{64}", h): raise HTTPException(400, "give a 0x transaction hash")
+    return {"tx": h, "chains": await chains.detect_tx_chains(h)}
+@app.get("/api/evm/chains")
+def evm_chains():
+    """EVM chain configs + which history source each chain is using right now"""
+    out = []
+    for c, v in chains.EVM.items():
+        b = chains._bs_base(c)
+        out.append({"chain": c, "name": v["name"], "short": v["short"], "id": v["id"], "unit": v["unit"], "color": v["color"], "explorer": v["ex"],
+                    "history_source": (b.split("/api/v2")[0] if b else {"binplorer": "Binplorer (keyless)", "ethplorer": "Ethplorer (keyless)", "logs": "public RPC log scan (recent window)"}[v["fallback"]]),
+                    "blockscout_refused": [k for k, t in chains.BSDEAD.items() if _t.time() - t < 900 and any(k in x for x in v["bs"])],
+                    "rpcs": len(v["rpcs"]), "blockscout_key": bool(chains.evmcfg.BS_KEY)})
+    return {"chains": out}
 @app.get("/api/bridges")
 def bridges_supported(): return {"supported": bridges.SUPPORTED}
 @app.get("/api/prices")

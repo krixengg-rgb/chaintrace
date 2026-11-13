@@ -4,10 +4,10 @@ import asyncio, time, uuid, chains, trace, deposits, bridges
 from labels import EXPO, RISK
 ENDPOINT = set(RISK) - {"other", "miner"}
 ENDPOINT_AT = 0.85
-SEM = {"sol": 1, "btc": 3, "eth": 3, "tron": 2, "xrp": 2}
+SEM = {"sol": 1, "btc": 3, "eth": 3, "tron": 2, "xrp": 2, "bsc": 2, "arb": 2, "base": 2, "polygon": 2, "op": 2}
 def _sh(x): return x if x.startswith("tx:") else x[:8] + "…"
 MAX_BRIDGE_HOPS = 8
-NATIVE_UNIT = {"btc": "BTC", "eth": "ETH", "sol": "SOL", "tron": "TRX", "xrp": "XRP"}
+NATIVE_UNIT = {"btc": "BTC", "eth": "ETH", "sol": "SOL", "tron": "TRX", "xrp": "XRP", **{c: v["unit"] for c, v in chains.EVM.items()}}
 async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges=False, follow_change=False):
     J = trace.JOBS[job]; c, kind = chains.detect(q); J.update(chain=c, status="running"); t0 = time.time()
     nodes, edges, parent, depth_of = {}, {}, {}, {}
@@ -36,7 +36,7 @@ async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, s
         J["summary"]["balance_usd"] = chains.usd_of(d0.get("balance"), d0.get("unit"))
         nodes[root] = next((n for n in d0["nodes"] if n["id"] == root), chains.node(c, root)); cache = {root: d0}; frontier = [root]
     else:
-        await chains.ensure_prices(); d0 = await chains.TX[c](q); root = "tx:" + q; cache = {}
+        await chains.ensure_prices(); d0 = await chains.TX[c](q); root = "tx:" + (d0.get("tx") or q); cache = {}
         for n in d0["nodes"]:
             if n["id"] == root: nodes[root] = n
         lab = {n["id"]: n for n in d0["nodes"]}; frontier = []

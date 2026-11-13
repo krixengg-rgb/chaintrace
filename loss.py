@@ -27,9 +27,10 @@ METHODS = {
     "lifo": ("LIFO (last in, first out)",
              "The most recent receipts are spent first. Victim funds are treated as leaving first when they are the latest funds to arrive."),
 }
-STABLE = {"USDT", "USDC", "DAI", "USDS", "PYUSD", "FDUSD", "TUSD", "USDE", "USDC.E", "BUSD"}
-PXSYM = {"BTC": "BTC", "WBTC": "BTC", "CBBTC": "BTC", "ETH": "ETH", "WETH": "ETH", "STETH": "ETH", "SOL": "SOL", "WSOL": "SOL", "XRP": "XRP"}
-NATIVE = {"btc": "BTC", "eth": "ETH", "sol": "SOL", "tron": "TRX", "xrp": "XRP"}
+STABLE = {"USDT", "USDC", "DAI", "USDS", "PYUSD", "FDUSD", "TUSD", "USDE", "USDC.E", "BUSD", "USDT0", "USD₮0", "USDBC", "BSC-USD"}
+PXSYM = {"BTC": "BTC", "WBTC": "BTC", "CBBTC": "BTC", "BTCB": "BTC", "ETH": "ETH", "WETH": "ETH", "STETH": "ETH", "SOL": "SOL", "WSOL": "SOL", "XRP": "XRP",
+         "BNB": "BNB", "WBNB": "BNB", "POL": "POL", "WPOL": "POL", "MATIC": "POL", "WMATIC": "POL"}
+NATIVE = {"btc": "BTC", "eth": "ETH", "sol": "SOL", "tron": "TRX", "xrp": "XRP", "bsc": "BNB", "arb": "ETH", "base": "ETH", "polygon": "POL", "op": "ETH"}
 CATS = [  # (key, heading, statement wording)
     ("exchange", "Exchanges / VASPs", "received by addresses attributed to an exchange or other virtual asset service provider (VASP)"),
     ("bridge", "Bridges (not followed further)", "sent into a cross-chain bridge with no matched destination on the graph"),
@@ -106,8 +107,8 @@ async def _balance(chain, a):
         if chain == "btc":
             i = await chains.get(f"{chains.MP}/address/{a}", ttl=120); cs, ms = i["chain_stats"], i["mempool_stats"]
             return (cs["funded_txo_sum"] - cs["spent_txo_sum"] + ms["funded_txo_sum"] - ms["spent_txo_sum"]) / 1e8
-        if chain == "eth":
-            r = await chains.eth_rpc_any("eth_getBalance", [a, "latest"], 5); return int(r, 16) / 1e18
+        if chain in chains.EVM:
+            r = await chains.eth_rpc_any("eth_getBalance", [chains.evmcfg.bare(a), "latest"], 5, chain=chain); return int(r, 16) / 1e18
         if chain == "sol":
             r = await chains.rpc(chains.SOL, "getBalance", [a]); return (r.get("value") if isinstance(r, dict) else r) / 1e9
         if chain == "xrp":
@@ -527,7 +528,7 @@ async def compute(p, spec=None, live_balances=True):
         "held_usd_now": round(sum(d["usd_now"] or 0 for d in held), 2), "held_gbp_now": round(sum(d["gbp_now"] or 0 for d in held), 2) if g_now else None,
         "swaps": swaps, "bridges": bridges_x, "hops": hops, "reconciliation": recon,
         "gbp_rate_now": {"rate": gtoday[0], "date": gtoday[1], "source": gtoday[2]} if gtoday else None,
-        "price_sources": "Today: Coinbase spot (CoinGecko when available); stablecoins at $1.00. On the day: Coinbase Exchange daily close (UTC day) for BTC, ETH, SOL and XRP (and wrapped versions); stablecoins at par; no daily price for other tokens. GBP: ECB euro reference rates via the Frankfurter API (previous working day at weekends), Coinbase spot rate as a fallback.",
+        "price_sources": "Today: Coinbase spot (CoinGecko when available); stablecoins at $1.00. On the day: Coinbase Exchange daily close (UTC day) for BTC, ETH (incl. ETH on Arbitrum, Base and OP Mainnet), SOL, XRP, BNB and POL (and wrapped versions); stablecoins at par; no daily price for other tokens. GBP: ECB euro reference rates via the Frankfurter API (previous working day at weekends), Coinbase spot rate as a fallback.",
         "leads_present": leads_present, "warnings": warns, "errors": errs,
         "caveats": [
             "This is an analysis of the transactions shown on the ChainTrace graph. It is only as complete as the graph: flows that were not looked up are not included.",

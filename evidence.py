@@ -129,7 +129,7 @@ def vasp_schedule(p):
     for i, n in nodes.items():
         if R.is_tx(i) or n.get("grp") or n.get("meta"): continue
         c, a = A["chain_of"](i), R.cid(i)[1]
-        if not a or c not in ("btc", "eth", "sol", "tron", "xrp"): continue
+        if not a or c not in ("btc", "eth", "sol", "tron", "xrp", "bsc", "arb", "base", "polygon", "op"): continue
         ul = case_labels.get(i) if isinstance(case_labels, dict) else None
         r = _entity_for(i, n, ul, c, a)
         if not r: continue

@@ -4,7 +4,7 @@ Decoded = the trader's net token flows (ERC-20 Transfer logs, tx value, WETH unw
 (Uniswap V2 & forks, Uniswap V3 & forks, Uniswap V4, Balancer V2, Curve). Pools are identified by factory() / known contracts.
 Anything not read directly from an event is listed in "inferred"."""
 import asyncio, re, time
-import chains, labels
+import chains, labels, evmcfg
 from keccak import to_checksum
 
 T_TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
@@ -17,7 +17,9 @@ T_CRV_U = "0xd013ca23e77a65003c2c659c5442c00c805371b7fc1ebd4c206c41d1536bd90b"
 T_CRV2 = "0xb2e76ae99761dc136e598d4a629bb347eccb9532a5f8bbd72e18467c3c34cc98"
 T_WDEP = "0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c"
 T_WWD = "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65"
-SWAP_TOPICS = {T_V2: "v2", T_V3: "v3", T_V4: "v4", T_BAL: "balancer", T_CRV: "curve", T_CRV_U: "curve", T_CRV2: "curve"}
+T_V3P = "0x19b47279256b2a23a1665c810c8d55a1758940ee09377d4f8d26497a3577dc83"   # PancakeSwap V3 (adds protocol-fee fields)
+T_SOLIDLY = "0xb3e2773606abfd36b5bd91394b3a54d1398336c65005baf7bf7a05efeffaf75b"  # Aerodrome / Velodrome V2 pools (Solidly-style)
+SWAP_TOPICS = {T_V2: "v2", T_V3: "v3", T_V3P: "v3", T_SOLIDLY: "v2", T_V4: "v4", T_BAL: "balancer", T_CRV: "curve", T_CRV_U: "curve", T_CRV2: "curve"}
 WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
 # well-known tokens (avoid eth_calls for the common ones)
 TOKENS = {WETH: ("WETH", 18), "0xdac17f958d2ee523a2206206994597c13d831ec7": ("USDT", 6), "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": ("USDC", 6),
@@ -38,6 +40,26 @@ ROUTERS = {"0x7a250d5630b4cf539739df2c5dacb4c659f2488d": "Uniswap V2 Router 02",
            "0xdef1c0ded9bec7f1a1670819833240f027b25eff": "0x Exchange Proxy", "0x9008d19f58aabd9ed0d60971565aa8510560ab41": "CoW Protocol settlement",
            "0xdef171fe48cf0115b1d80b88dc8eab59176fee57": "ParaSwap v5", "0x881d40237659c251811cec9c364ef91dc08d300c": "MetaMask Swap Router",
            BAL_VAULT: "Balancer V2 Vault"}
+# per-chain routers (tx.to). Same-address deployments (1inch, Uniswap Universal Router, 0x) are listed under every chain they share.
+ROUTERS_X = {
+ "bsc": {"0x10ed43c718714eb63d5aa57b78b54704e256024e": "PancakeSwap V2 Router", "0x13f4ea83d0bd40e75c8222255bc855a974568dd4": "PancakeSwap Smart Router",
+         "0x1b81d678ffb9c0263b24a97847620c99d213eb14": "PancakeSwap V3 SwapRouter", "0xd9c500dff816a1da21a48a732d3498bf09dc9aeb": "PancakeSwap Universal Router"},
+ "arb": {"0xc873fecbd354f5a56e00e710b90ef4201db2448d": "Camelot Router", "0x1b02da8cb0d097eb8d57a175b88c7d8b47997506": "SushiSwap Router",
+         "0xa51afafe0263b40edaef0df8781ea9aa03e381a3": "Uniswap Universal Router (V4)"},
+ "base": {"0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43": "Aerodrome Router", "0x6ff5693b99212da76ad316178a184ab56d299b43": "Uniswap Universal Router (V4)",
+          "0x2626664c2603336e57b271c5c0b26f421741e481": "Uniswap SwapRouter02"},
+ "op": {"0xa062ae8a9c5e11aaa026fc2670b0d65ccc8b2858": "Velodrome Router", "0x851116d9223fabed8e56c0e6b8ad0c31d98b3507": "Uniswap Universal Router (V4)"},
+ "polygon": {"0xa5e0829caced8ffdd4de3c43696c57f7d7a678ff": "QuickSwap Router", "0xf5b509bb0909a69b1c207e495f687a596c168e12": "QuickSwap V3 Router",
+             "0x1095692a6237d83c6a72f3f5efedb9a670c49223": "Uniswap Universal Router (V4)"},
+}
+SHARED_ROUTERS = ("0x111111125421ca6dc452d289314280a0f8842a65", "0x1111111254eeb25477b68fb85ed929f73a960582", "0x3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad",
+                  "0xdef1c0ded9bec7f1a1670819833240f027b25eff", "0x9008d19f58aabd9ed0d60971565aa8510560ab41", "0xdef171fe48cf0115b1d80b88dc8eab59176fee57")
+def router_name(chain, a):
+    a = (a or "").lower()
+    if chain == "eth": return ROUTERS.get(a)
+    return (ROUTERS_X.get(chain) or {}).get(a) or (ROUTERS.get(a) if a in SHARED_ROUTERS else None)
+def wnative(chain): return evmcfg.EVM[chain]["wnative"]
+def native(chain): return evmcfg.EVM[chain]["unit"]
 AGG = ("1inch", "0x ", "CoW", "ParaSwap", "MetaMask")
 
 def _a(word): return "0x" + word[-40:].lower()
@@ -46,9 +68,9 @@ def _s(h):
     v = int(h, 16); return v - (1 << 256) if v >= 1 << 255 else v
 def _words(data): d = (data or "0x")[2:]; return [d[i:i + 64] for i in range(0, len(d), 64)]
 
-async def call(to, sel, arg=None):
+async def call(to, sel, arg=None, chain="eth"):
     data = "0x" + sel + (arg or "")
-    try: return await chains.eth_rpc_any("eth_call", [{"to": to, "data": data}, "latest"], 6)
+    try: return await chains.eth_rpc_any("eth_call", [{"to": to, "data": data}, "latest"], 6, chain=chain)
     except Exception: return None
 def _str(res):
     if not res or res == "0x": return None
@@ -58,44 +80,49 @@ def _str(res):
         return bytes.fromhex(w[0]).rstrip(b"\0").decode("utf-8", "ignore").strip() or None
     except Exception: return None
 _TOK = {}
-async def token(addr):
+async def token(addr, chain="eth"):
     a = addr.lower()
-    if a in TOKENS: return TOKENS[a]
-    if a in _TOK: return _TOK[a]
-    sym, dec = await asyncio.gather(call(a, "95d89b41"), call(a, "313ce567"))
+    if chain == "eth" and a in TOKENS: return TOKENS[a]
+    if chain != "eth" and a in evmcfg.TOKENS.get(chain, {}): return evmcfg.TOKENS[chain][a]
+    k = (chain, a)
+    if k in _TOK: return _TOK[k]
+    sym, dec = await asyncio.gather(call(a, "95d89b41", chain=chain), call(a, "313ce567", chain=chain))
     s = _str(sym) or a[:8]; d = _u(dec) if dec and dec != "0x" else 18
-    _TOK[a] = (s[:16], d if d < 80 else 18); return _TOK[a]
+    _TOK[k] = (s[:16], d if d < 80 else 18); return _TOK[k]
 _POOL = {}
-async def pool_info(addr, kind):
+async def pool_info(addr, kind, chain="eth"):
     a = addr.lower()
-    if a in _POOL: return _POOL[a]
+    if (chain, a) in _POOL: return _POOL[(chain, a)]
+    call_ = lambda to, sel, arg=None: call(to, sel, arg, chain)
     info = {"address": addr, "dex": None, "token0": None, "token1": None, "fee": None}
     if kind in ("v2", "v3"):
-        f, t0, t1, fee = await asyncio.gather(call(a, "c45a0155"), call(a, "0dfe1681"), call(a, "d21220a7"), call(a, "ddca3f43") if kind == "v3" else asyncio.sleep(0))
+        f, t0, t1, fee = await asyncio.gather(call_(a, "c45a0155"), call_(a, "0dfe1681"), call_(a, "d21220a7"), call_(a, "ddca3f43") if kind == "v3" else asyncio.sleep(0))
         fa = _a(f) if f and len(f) >= 42 else None
         info.update(token0=_a(t0) if t0 and len(t0) >= 42 else None, token1=_a(t1) if t1 and len(t1) >= 42 else None,
                     fee=_u(fee) if isinstance(fee, str) and fee != "0x" else None, factory=fa)
-        info["dex"] = FACTORIES.get(fa) or ("Uniswap V2-style pool" if kind == "v2" else "Uniswap V3-style pool")
+        info["dex"] = (FACTORIES if chain == "eth" else evmcfg.FACTORIES.get(chain, {})).get(fa) or ("Uniswap V2-style pool" if kind == "v2" else "Uniswap V3-style pool")
     elif kind == "v4": info["dex"] = "Uniswap V4"
     elif kind == "balancer": info["dex"] = "Balancer V2"
     elif kind == "curve":
         info["dex"] = "Curve"
         try:
-            nm = labels.label("eth", addr).get("name")
+            nm = labels.label(chain, addr).get("name")
             if nm: info["name"] = nm
         except Exception: pass
-    _POOL[a] = info; return info
+    _POOL[(chain, a)] = info; return info
 
-async def _curve_coin(pool, i):
+async def _curve_coin(pool, i, chain="eth"):
     for sel in ("c6610657", "23746eb8"):
-        r = await call(pool, sel, format(i, "064x"))
+        r = await call(pool, sel, format(i, "064x"), chain)
         if r and len(r) >= 42 and int(r, 16): return _a(r)
     return None
 
-async def _internal_eth(h):
-    """Blockscout internal ETH transfers for the tx (optional; None if unavailable)"""
+async def _internal_eth(h, chain="eth"):
+    """Blockscout internal native-coin transfers for the tx (optional; None if unavailable)"""
     try:
-        d, _ = await chains._cap(chains.get(f"{chains.BS}/transactions/{h}/internal-transactions", ttl=chains.LONG), 5)
+        b = chains._bs_base(chain)
+        if not b: return None
+        d, _ = await chains._cap(chains.get(f"{b}/transactions/{h}/internal-transactions", ttl=chains.LONG), 5)
         if d is None: return None
         return [(x["from"]["hash"].lower(), x["to"]["hash"].lower(), int(x.get("value") or 0) / 1e18) for x in d.get("items", []) if x.get("from") and x.get("to") and int(x.get("value") or 0) and x.get("success", True)]
     except Exception: return None
@@ -106,15 +133,17 @@ def fmt_amt(x):
     return f"{x:,.6f}".rstrip("0").rstrip(".") or "0"
 
 _DEC = {}
-async def decode(h, trader_hint=None):
+async def decode(h, trader_hint=None, chain="eth"):
     h = h.lower() if h.startswith("0x") else "0x" + h.lower()
-    k = (h, (trader_hint or "").lower())
+    trader_hint = evmcfg.bare(trader_hint) if trader_hint else trader_hint
+    k = (chain, h, (trader_hint or "").lower())
     if k in _DEC: return _DEC[k]
-    r = await _decode(h, trader_hint)
+    r = await _decode(h, trader_hint, chain)
     if len(_DEC) > 3000: _DEC.clear()
     _DEC[k] = r; return r
-async def _decode(h, trader_hint=None):
-    tx, rc = await asyncio.gather(chains.eth_rpc_any("eth_getTransactionByHash", [h], 8), chains.eth_rpc_any("eth_getTransactionReceipt", [h], 8))
+async def _decode(h, trader_hint=None, chain="eth"):
+    WETH = wnative(chain); NAT = native(chain)
+    tx, rc = await asyncio.gather(chains.eth_rpc_any("eth_getTransactionByHash", [h], 8, chain=chain), chains.eth_rpc_any("eth_getTransactionReceipt", [h], 8, chain=chain))
     if not tx or not rc: return None
     if rc.get("status") not in ("0x1", 1, None): return None
     logs = rc.get("logs") or []
@@ -136,25 +165,25 @@ async def _decode(h, trader_hint=None):
     if not kinds and not (net.get(trader) and len([1 for v in net[trader].values() if v > 0]) and (value or any(v < 0 for v in net[trader].values()))):
         return None
     t_info = {}
-    for tk in touched: t_info[tk] = await token(tk)
+    for tk in touched: t_info[tk] = await token(tk, chain)
     inferred = []; method = "decoded from DEX swap event logs" if kinds else "inferred from token transfers (no known DEX swap event)"
     sold, bought = {}, {}
     for tk, v in (net.get(trader) or {}).items():
         if not v: continue
         sym, dec = t_info[tk]; amt = abs(v) / 10 ** dec
         (bought if v > 0 else sold)[tk] = [sym, amt]
-    if value: sold["eth"] = ["ETH", value + (sold.pop("eth", [None, 0])[1])]
+    if value: sold["eth"] = [NAT, value + (sold.pop("eth", [None, 0])[1])]
     # ETH paid out to the trader inside the tx (router unwraps WETH then sends ETH): read internal txs, else infer from the WETH unwrap
-    eth_in = 0.0; it = await _internal_eth(h) if (unwrap or kinds) else None
+    eth_in = 0.0; it = await _internal_eth(h, chain) if (unwrap or kinds) else None
     if it is not None:
         eth_in = sum(v for f_, t_, v in it if t_ == trader) - sum(v for f_, t_, v in it if f_ == trader)
     elif unwrap and not bought:
-        eth_in = sum(v for _, v in unwrap) / 1e18; inferred.append("ETH received inferred from the WETH unwrap (internal transfers unavailable)")
+        eth_in = sum(v for _, v in unwrap) / 1e18; inferred.append(f"{NAT} received inferred from the wrapped-{NAT} unwrap (internal transfers unavailable)")
     if eth_in > 1e-12:
         if "eth" in sold:   # refund of excess ETH
             sold["eth"][1] -= eth_in
             if sold["eth"][1] <= 1e-12: sold.pop("eth")
-        else: bought["eth"] = ["ETH", eth_in]
+        else: bought["eth"] = [NAT, eth_in]
     recipient = trader
     if not bought:   # output went to another address (e.g. swap-and-send): the largest non-pool receiver of a token the trader didn't sell
         pools = {l["address"].lower() for _, l in kinds} | {to, V4_POOLMANAGER, BAL_VAULT}
@@ -173,7 +202,7 @@ async def _decode(h, trader_hint=None):
     for kind, l in kinds[:12]:
         tp = l.get("topics") or []; w = _words(l.get("data")); pa = l["address"]
         try:
-            pi = await pool_info(pa, kind); hop = {"dex": pi.get("dex"), "pool": pa, "kind": kind}
+            pi = await pool_info(pa, kind, chain); hop = {"dex": pi.get("dex"), "pool": pa, "kind": kind}
             if kind == "v2" and len(w) >= 4 and pi.get("token0"):
                 a0i, a1i, a0o, a1o = (_u(x) for x in w[:4]); t0, t1 = pi["token0"], pi["token1"]
                 ti, to_ = (t0, t1) if a0i > 0 else (t1, t0); ai, ao = (a0i, a1o) if a0i > 0 else (a1i, a0o)
@@ -185,29 +214,29 @@ async def _decode(h, trader_hint=None):
                 ti, to_, ai, ao = _a(tp[2]), _a(tp[3]), _u(w[0]), _u(w[1]); hop["pool_id"] = tp[1]
             elif kind == "curve" and len(w) >= 4:
                 i, ai, j, ao = _u(w[0]), _u(w[1]), _u(w[2]), _u(w[3])
-                ti, to_ = await _curve_coin(pa, i), await _curve_coin(pa, j)
+                ti, to_ = await _curve_coin(pa, i, chain), await _curve_coin(pa, j, chain)
                 if pi.get("name"): hop["dex"] = f"Curve ({re.sub(r'^curve[a-z]*_', '', pi['name'], flags=re.I).split('-')[0]})"
             elif kind == "v4" and len(w) >= 2:
                 hop.update(token_in=None, token_out=None, note="pool tokens not resolved (Uniswap V4 pool id); amounts from the trader's transfers"); hop["pool_id"] = tp[1] if len(tp) > 1 else None
                 hops.append(hop); continue
             else: hops.append(hop); continue
             for tk in (ti, to_):
-                if tk and tk not in t_info: t_info[tk] = await token(tk)
+                if tk and tk not in t_info: t_info[tk] = await token(tk, chain)
             si, di = t_info.get(ti, ("?", 18)), t_info.get(to_, ("?", 18))
             hop.update(token_in=ti, token_out=to_, sym_in=si[0], sym_out=di[0], amount_in=ai / 10 ** si[1], amount_out=ao / 10 ** di[1])
         except Exception as ex: hop = {"dex": "?", "pool": pa, "kind": kind, "error": type(ex).__name__}
         hops.append(hop)
     if any(hh.get("kind") == "v4" for hh in hops): inferred.append("Uniswap V4 pool tokens not resolved; pair taken from the trader's net transfers")
     dexes = list(dict.fromkeys(hh["dex"] for hh in hops if hh.get("dex")))
-    rname = ROUTERS.get(to)
+    rname = router_name(chain, to)
     if not rname:
-        try: rname = labels.label("eth", tx.get("to")).get("name")
+        try: rname = labels.label(chain, tx.get("to")).get("name")
         except Exception: rname = None
     if rname and any(x in rname for x in AGG): venue = f"{rname.split(' Aggregation')[0].split(' Exchange')[0].split(' settlement')[0]}" + (f" (via {', '.join(dexes[:3])})" if dexes else "")
     else: venue = " → ".join(dexes[:3]) if dexes else (rname or "an unidentified contract")
     if not dexes: inferred.append("no recognised DEX swap event; venue taken from the called contract")
     blk = None
-    try: blk = await chains.eth_rpc_any("eth_getBlockByNumber", [tx.get("blockNumber"), False], 6)
+    try: blk = await chains.eth_rpc_any("eth_getBlockByNumber", [tx.get("blockNumber"), False], 6, chain=chain)
     except Exception: pass
     ts = _u(blk.get("timestamp")) if blk else None
     S = [{"token": tk if tk != "eth" else None, "symbol": s, "amount": a, "usd": chains.usd_of(a, s)} for tk, (s, a) in sold.items() if a > 0]
@@ -218,19 +247,20 @@ async def _decode(h, trader_hint=None):
     return {"tx": h, "time": ts, "block": _u(tx.get("blockNumber")), "trader": checksum(trader), "recipient": checksum(recipient),
             "sender": checksum(tx.get("from")), "router": {"address": checksum(tx.get("to")), "name": rname}, "venue": venue, "dexes": dexes, "hops": hops,
             "sold": S, "bought": B, "text": txt, "method": method, "inferred": inferred, "decoded": bool(kinds) and not any("V4" in x for x in inferred),
-            "usd_basis": "trace-time price (not historical)", "source": "Ethereum public RPC receipt logs" + (" + Blockscout internal transactions" if it is not None else "")}
+            "usd_basis": "trace-time price (not historical)", "chain": chain, "chain_name": evmcfg.EVM[chain]["name"],
+            "source": f"{evmcfg.EVM[chain]['name']} public RPC receipt logs" + (" + Blockscout internal transactions" if it is not None else "")}
 
 def checksum(a):
     try: return to_checksum(a) if a else a
     except Exception: return a
 
-def graph(sw, canon=None, tid=None):
+def graph(sw, canon=None, tid=None, chain=None):
     """swap -> one grouped step: trader -> [swap node] -> recipient. Node id is tx:<hash> so existing tx handling (expand, report) applies."""
-    canon = canon or {}
-    c = lambda a: canon.get((a or "").lower()) or checksum(a)
+    canon = canon or {}; chain = chain or sw.get("chain") or "eth"
+    c = lambda a: canon.get((a or "").lower()) or evmcfg.nid(chain, checksum(a))
     tid = tid or "tx:" + sw["tx"]; tr, rc = c(sw["trader"]), c(sw["recipient"])
     short = f"{fmt_amt(sw['sold'][0]['amount'])} {sw['sold'][0]['symbol']} → {fmt_amt(sw['bought'][0]['amount'])} {sw['bought'][0]['symbol']}"
-    node = {"id": tid, "chain": "eth", "kind": "swap", "name": f"Swap · {short}", "swap": sw, "tags": [], "risk": 0}
+    node = {"id": tid, "chain": chain, "kind": "swap", "name": f"Swap · {short}", "swap": sw, "tags": [], "risk": 0}
     edges = []
     for x in sw["sold"]:
         edges.append({"source": tr, "target": tid, "amount": x["amount"], "unit": x["symbol"], "usd": x["usd"], "tx": sw["tx"], "time": sw["time"],
@@ -238,7 +268,7 @@ def graph(sw, canon=None, tid=None):
     for x in sw["bought"]:
         edges.append({"source": tid, "target": rc, "amount": x["amount"], "unit": x["symbol"], "usd": x["usd"], "tx": sw["tx"], "time": sw["time"],
                       "swap": {"leg": "bought", "venue": sw["venue"], "text": sw["text"], "decoded": sw["decoded"]}})
-    nodes = [node] + [chains.node("eth", a) for a in dict.fromkeys([tr, rc]) if a]
+    nodes = [node] + [chains.node(chain, a) for a in dict.fromkeys([tr, rc]) if a]
     return nodes, edges
 
 def candidates(focus, raw_edges, cap=10):
@@ -258,11 +288,11 @@ def candidates(focus, raw_edges, cap=10):
     out = [{"tx": h, "time": d["time"]} for h, d in by.items() if d["out"] and d["in"] and (d["in"] - d["out"])]
     out.sort(key=lambda x: -(x["time"] or 0)); return out[:cap]
 
-async def decode_many(hashes, trader=None, budget=20):
+async def decode_many(hashes, trader=None, budget=20, chain="eth"):
     sem = asyncio.Semaphore(3); t0 = time.time()
     async def one(h):
         async with sem:
             if time.time() - t0 > budget: return None
-            try: return await asyncio.wait_for(decode(h, trader), max(3, budget - (time.time() - t0)))
+            try: return await asyncio.wait_for(decode(h, trader, chain), max(3, budget - (time.time() - t0)))
             except Exception: return None
     return [x for x in await asyncio.gather(*[one(h) for h in hashes]) if x]
