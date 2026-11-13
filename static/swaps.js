@@ -16,22 +16,23 @@ function decorate(){cy.nodes('[kind="swap"]').forEach(n=>{const s=(n.data('info'
 window.ctSwapDecorate=decorate;
 const asked=new Set();window.CT_SWAPS=window.CT_SWAPS||{};
 window.ctDecodeSwaps=async function(cands,trader){const txs=(cands||[]).map(c=>c.tx).filter(h=>h&&!asked.has(h+trader));if(!txs.length)return;txs.forEach(h=>asked.add(h+trader));
- try{const r=await fetch('/api/eth/swaps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({txs,trader})});if(!r.ok)return;const j=await r.json();
+ const ch=(/^(bsc|arb|base|polygon|op):/.exec(trader)||[,'eth'])[1];
+ try{const r=await fetch('/api/eth/swaps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({txs,trader,chain:ch})});if(!r.ok)return;const j=await r.json();
   for(const s of j.swaps||[])CT_SWAPS[s.tx]=s;
-  if((j.nodes||[]).length){_add({chain:'eth',unit:'ETH',nodes:j.nodes,edges:j.edges},null);decorate();
+  if((j.nodes||[]).length){_add({chain:ch,unit:'',nodes:j.nodes,edges:j.edges},null);decorate();
    toast(`${j.swaps.length} DEX swap${j.swaps.length>1?'s':''} decoded into readable steps`)}}catch(e){}};
 const _add=window.add;
 window.add=function(d,focus){_add(d,focus);try{decorate();
-  if(d&&d.chain==='eth'&&d.swap_candidates&&d.swap_candidates.length&&d.address)ctDecodeSwaps(d.swap_candidates,d.address);
+  if(d&&(d.chain==='eth'||EVMX.includes(d.chain))&&d.swap_candidates&&d.swap_candidates.length&&d.address)ctDecodeSwaps(d.swap_candidates,d.address);
   if(d&&d.swaps)for(const s of d.swaps)CT_SWAPS[s.tx]=s}catch(e){}};
 const card=s=>{const tx=s.tx;const u=x=>x.usd!=null?` <span class="usd">${usd(x.usd)}</span>`:'';
- return `<div class="card glass swapcard"><h3>${chainTag('eth')} DEX swap ${tagH('swap')}</h3>
+ const sc=s.chain||'eth';return `<div class="card glass swapcard"><h3>${chainTag(sc)} DEX swap ${tagH('swap')}</h3>
  <div class="pair">${s.sold.map(x=>esc(nf(x.amount)+' '+x.symbol)).join(' + ')}<span class="ar">→</span>${s.bought.map(x=>esc(nf(x.amount)+' '+x.symbol)).join(' + ')}</div>
  <div class="dim" style="font-size:12px">${esc(s.text)}</div>
  <div class="kv" style="margin-top:8px"><div>Sold</div><div>${s.sold.map(x=>esc(nf(x.amount)+' '+x.symbol)+u(x)).join('<br>')}</div><div>Bought</div><div>${s.bought.map(x=>esc(nf(x.amount)+' '+x.symbol)+u(x)).join('<br>')}</div>
  <div>Venue</div><div>${esc(s.venue)}</div><div>Called</div><div>${esc(s.router&&s.router.name||'')} <span class="mono" style="font-size:11px">${esc(short(s.router&&s.router.address||''))}</span></div>
  <div>Trader</div><div class="mono">${esc(s.trader||'')}</div>${s.recipient&&s.trader&&s.recipient.toLowerCase()!==s.trader.toLowerCase()?`<div>Recipient</div><div class="mono">${esc(s.recipient)}</div>`:''}
- <div>Time</div><div>${s.time?tfmt(s.time):'–'}</div><div>Tx</div><div><a class="mono" target="_blank" rel="noopener" href="${CH.eth.tx}${esc(tx)}">${short(tx)}</a><button class="copy" onclick="copy('${esc(tx)}')">⧉</button></div></div>
+ <div>Time</div><div>${s.time?tfmt(s.time):'–'}</div><div>Tx</div><div><a class="mono" target="_blank" rel="noopener" href="${CH[sc].tx}${esc(tx)}">${short(tx)}</a><button class="copy" onclick="copy('${esc(tx)}')">⧉</button></div></div>
  ${(s.hops||[]).map((h,i)=>`<div class="hop"><b>Hop ${i+1}</b> · ${esc(h.dex||'?')}${h.fee?' · fee '+esc(h.fee):''}<br>${h.sym_in?esc(nf(h.amount_in)+' '+h.sym_in)+' → '+esc(nf(h.amount_out)+' '+h.sym_out):esc(h.note||'')}<br><span class="dim mono" style="font-size:10.5px">pool ${esc(h.pool||'')}</span></div>`).join('')}
  <div class="${s.decoded?'ok':'inf'}">${s.decoded?'✓ Decoded from the DEX’s own Swap event logs and the trader’s token transfers.':'⚠ Partly inferred: '+esc((s.inferred||[]).join('; ')||s.method)}</div>
  ${s.decoded&&(s.inferred||[]).length?`<div class="inf">Inferred: ${esc(s.inferred.join('; '))}</div>`:''}

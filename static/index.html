@@ -16,7 +16,7 @@ header{display:flex;align-items:center;gap:14px;padding:12px 16px;flex-wrap:wrap
 .brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:17px;letter-spacing:.2px;white-space:nowrap}
 .brand i{width:28px;height:28px;border-radius:9px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:grid;place-items:center;font-style:normal;font-size:15px;box-shadow:0 0 22px rgba(124,92,255,.55)}
 .brand small{color:var(--mut);font-weight:500;font-size:12px}
-.search{flex:1;min-width:280px;display:flex;align-items:center;gap:8px;padding:6px 6px 6px 14px;border-radius:14px}
+.search{flex:1;min-width:min(460px,100%);display:flex;align-items:center;gap:8px;padding:6px 6px 6px 14px;border-radius:14px}
 .search input{flex:1;min-width:0;background:none;border:0;outline:0;font-family:var(--mono);font-size:13.5px;padding:8px 0}
 .search input::placeholder{color:#5e6882;font-family:var(--font)}
 .badge{font-size:11px;font-weight:700;letter-spacing:.6px;padding:4px 9px;border-radius:999px;border:1px solid var(--line);color:var(--mut);white-space:nowrap;transition:.2s}
@@ -104,10 +104,13 @@ textarea:focus,.lblrow input:focus{border-color:rgba(124,92,255,.6)}
 </style></head><body>
 <header>
  <button class="btn ico" id="casesbtn" title="Cases" onclick="toggleCases()">☰</button>
- <div class="brand"><i>⛓</i>ChainTrace <small>BTC · ETH · SOL · TRON · XRP fund tracing</small></div>
+ <div class="brand"><i>⛓</i>ChainTrace <small>BTC · ETH · BSC · ARB · BASE · POL · OP · SOL · TRON · XRP fund tracing</small></div>
  <div class="search glass">
   <span id="chainBadge" class="badge">AUTO</span>
-  <input id="q" autocomplete="off" spellcheck="false" placeholder="Paste a BTC, ETH, SOL, TRON or XRP address / tx hash">
+  <select id="chainSel" title="EVM chain for 0x addresses / tx hashes (the same 0x address can exist on every EVM chain)" onchange="ctChainSel()">
+   <option value="auto">Auto</option><option value="eth">ETH</option><option value="bsc">BSC</option><option value="arb">Arbitrum</option>
+   <option value="base">Base</option><option value="polygon">Polygon</option><option value="op">Optimism</option><option value="all">All EVM</option></select>
+  <input id="q" autocomplete="off" spellcheck="false" placeholder="Paste a BTC, ETH/BSC/L2, SOL, TRON or XRP address / tx hash">
   <button class="btn pri" id="gobtn" onclick="go()">Trace</button>
  </div>
  <span id="caseChip">No case open</span><button class="btn" id="savebtn" onclick="saveToCase()">💾 Save case</button>
@@ -158,19 +161,37 @@ const CH={btc:{c:'#f7931a',n:'BTC',sym:'₿',tx:'https://mempool.space/tx/',ad:'
  eth:{c:'#8c9eff',n:'ETH',sym:'Ξ',tx:'https://etherscan.io/tx/',ad:'https://etherscan.io/address/'},
  sol:{c:'#14f195',n:'SOL',sym:'◎',tx:'https://solscan.io/tx/',ad:'https://solscan.io/account/'},
  tron:{c:'#ff425a',n:'TRX',sym:'T',tx:'https://tronscan.org/#/transaction/',ad:'https://tronscan.org/#/address/'},
- xrp:{c:'#00aae4',n:'XRP',sym:'✕',tx:'https://xrpscan.com/tx/',ad:'https://xrpscan.com/account/'}};
+ xrp:{c:'#00aae4',n:'XRP',sym:'✕',tx:'https://xrpscan.com/tx/',ad:'https://xrpscan.com/account/'},
+ bsc:{c:'#f3ba2f',n:'BSC',sym:'◆',tx:'https://bscscan.com/tx/',ad:'https://bscscan.com/address/',evm:1},
+ arb:{c:'#28a0f0',n:'ARB',sym:'A',tx:'https://arbiscan.io/tx/',ad:'https://arbiscan.io/address/',evm:1},
+ base:{c:'#3d7bff',n:'BASE',sym:'B',tx:'https://basescan.org/tx/',ad:'https://basescan.org/address/',evm:1},
+ polygon:{c:'#a46bff',n:'POL',sym:'⬡',tx:'https://polygonscan.com/tx/',ad:'https://polygonscan.com/address/',evm:1},
+ op:{c:'#ff3b4a',n:'OP',sym:'O',tx:'https://optimistic.etherscan.io/tx/',ad:'https://optimistic.etherscan.io/address/',evm:1}};
+const EVMX=['bsc','arb','base','polygon','op'];   // EVM chains with chain-prefixed graph ids ("base:0x…"); Ethereum keeps bare ids
+const bareId=a=>String(a??'').replace(/^(bsc|arb|base|polygon|op):/,'');
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const short=a=>!a?'':a.startsWith('tx:')?'tx '+a.slice(3,11)+'…':a.length>16?a.slice(0,6)+'…'+a.slice(-4):a;
+const short=a=>{if(!a)return'';const m=/^(bsc|arb|base|polygon|op):(.*)$/.exec(a);if(m)a=m[2];return a.startsWith('tx:')?'tx '+a.slice(3,11)+'…':a.length>16?a.slice(0,6)+'…'+a.slice(-4):a};
 const fmt=(n,d=6)=>n==null||isNaN(n)?'–':(+n).toLocaleString(undefined,{maximumFractionDigits:Math.abs(n)>=1000?2:d});
 const usd=n=>n==null?'':'$'+(+n).toLocaleString(undefined,{maximumFractionDigits:Math.abs(n)>=100?0:2});
 const tfmt=t=>{if(!t)return'pending';const d=typeof t==='number'?new Date(t*1000):new Date(t);return isNaN(d)?'':d.toISOString().slice(0,16).replace('T',' ')};
-function detect(q){q=q.trim();if(/^0x[0-9a-fA-F]{40}$/.test(q))return['eth','address'];if(/^0x[0-9a-fA-F]{64}$/.test(q))return['eth','tx'];
+function detect(q){q=q.trim();const pm=/^(bsc|arb|base|polygon|op|eth):(0x[0-9a-fA-F]{40}|0x[0-9a-fA-F]{64})$/.exec(q);if(pm)return[pm[1],pm[2].length===42?'address':'tx'];
+ const sel=($('chainSel')||{}).value;const ev=CH[sel]&&(sel==='eth'||EVMX.includes(sel))?sel:'eth';
+ if(/^0x[0-9a-fA-F]{40}$/.test(q))return[ev,'address'];if(/^0x[0-9a-fA-F]{64}$/.test(q))return[ev,'tx'];
  if(/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(q)||/^41[0-9a-fA-F]{40}$/.test(q))return['tron','address'];
  if(/^r[rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz]{24,34}$/.test(q))return['xrp','address'];
  if(/^[0-9a-fA-F]{64}$/.test(q))return['btc','tx'];if(/^(bc1[02-9ac-hj-np-z]{11,71}|[13][1-9A-HJ-NP-Za-km-z]{25,34})$/.test(q))return['btc','address'];
  if(/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(q))return['sol','tx'];if(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(q))return['sol','address'];return[null,null]}
-function setBadge(){const[c,k]=detect($('q').value);const b=$('chainBadge');b.className='badge '+(c||'');b.textContent=c?CH[c].sym+' '+CH[c].n+(k==='tx'?' TX':''):'AUTO'}
+function setBadge(){const[c,k]=detect($('q').value);const b=$('chainBadge');const sel=($('chainSel')||{}).value;const amb=/^0x[0-9a-fA-F]+$/.test($('q').value.trim())&&sel==='auto';
+ if(sel==='all'&&/^(0x)?[0-9a-fA-F]{40}$/.test(bareId($('q').value.trim()).replace(/^0x/,''))){b.className='badge';b.textContent='⛓ ALL EVM';return}
+ b.className='badge '+(c||'');b.textContent=c?CH[c].sym+' '+CH[c].n+(k==='tx'?' TX':'')+(amb?(k==='tx'?' · auto-detect':' · default'):''):'AUTO'}
+// 0x values are ambiguous across EVM chains: the selector prefixes them ("base:0x…") so every request (lookup, expand, trace, AutoTrace, links) carries the chain
+function normQ(){const sel=$('chainSel').value;let q=$('q').value.trim();const m=/^(bsc|arb|base|polygon|op|eth):(0x[0-9a-fA-F]+)$/.exec(q);
+ if(m){if(sel!=='all'&&sel!==m[1])$('chainSel').value=m[1];q=m[1]==='eth'?m[2]:q}
+ else if(EVMX.includes(sel)&&/^0x([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(q))q=sel+':'+q;
+ $('q').value=q;setBadge();return q}
+function ctChainSel(){const sel=$('chainSel').value;let q=$('q').value.trim();const m=/^(bsc|arb|base|polygon|op|eth):(0x[0-9a-fA-F]+)$/.exec(q);if(m)q=m[2];
+ if(EVMX.includes(sel)&&/^0x/.test(q))q=sel+':'+q;$('q').value=q;setBadge()}
 $('q').addEventListener('input',setBadge);$('q').addEventListener('keydown',e=>{if(e.key==='Enter')go()});
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('on');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('on'),1800)}
 function copy(s){navigator.clipboard?.writeText(s).then(()=>toast('Copied'),()=>toast('Copy failed'))}
@@ -225,9 +246,9 @@ function skeleton(){$('side').innerHTML=`<div class="card glass"><div class="sk"
 function share(extra){const p=new URLSearchParams();const q=$('q').value.trim();if(q)p.set('q',q);
  if(mode==='auto'){p.set('mode','auto');p.set('dir',$('dir').value);p.set('amax',$('amax').value);p.set('amin',$('amin').value);p.set('topk',$('topk').value)}
  if(mode==='trace'){p.set('mode','trace');p.set('hops',$('hops').value);p.set('dir',$('dir').value);p.set('topk',$('topk').value)}
- if($('df').value)p.set('from',$('df').value);if($('dt').value)p.set('to',$('dt').value);history.replaceState(null,'','?'+p.toString())}
+ if($('df').value)p.set('from',$('df').value);if($('dt').value)p.set('to',$('dt').value);if($('chainSel').value==='all')p.set('chain','all');history.replaceState(null,'','?'+p.toString())}
 function demo(a){$('q').value=a;setBadge();go()}
-async function go(){const q=$('q').value.trim();if(!q)return;mode='lookup';share();cy.elements().remove();expanded.clear();$('det').innerHTML='';skeleton();
+async function go(){const q=normQ();if(!q)return;mode='lookup';share();cy.elements().remove();expanded.clear();$('det').innerHTML='';skeleton();
  try{const d=await api(q);add(d,d.address||('tx:'+d.tx));expanded.add(d.address);cur=d;render(d);cy.animate({fit:{padding:40}},{duration:400});if(d.pending&&d.pending.length)refreshPending(q,d,1)}catch(e){$('side').innerHTML=''}}
 // progressive load: the server answers within ~4s and keeps fetching slow Blockscout streams in the background; re-ask (cache hit) and merge
 function refreshPending(q,d0,n){setTimeout(async()=>{if(cur!==d0||mode!=='lookup'||$('q').value.trim()!==q)return;
@@ -245,7 +266,7 @@ async function expand(id){if(id.startsWith('tx:')||expanded.has(id))return;expan
  try{const d=await api(id);add(d,null);toast('Expanded '+short(id)+' (+'+d.edges.length+' flows)');
   if(d.pending&&d.pending.length)setTimeout(async()=>{try{const r=await fetch('/api/lookup?q='+encodeURIComponent(id)+dts());if(r.ok)add(await r.json(),null)}catch(e){}},6000)}catch(e){expanded.delete(id)}}
 // ---------- trace jobs ----------
-async function traceN(){const q=$('q').value.trim();if(!q)return;mode='trace';share();cy.elements().remove();expanded.clear();$('det').innerHTML='';skeleton();
+async function traceN(){const q=normQ();if(!q)return;mode='trace';share();cy.elements().remove();expanded.clear();$('det').innerHTML='';skeleton();
  const p=`q=${encodeURIComponent(q)}&hops=${$('hops').value}&direction=${$('dir').value}&topk=${$('topk').value}`;
  const r=await fetch('/api/trace?'+p,{method:'POST'});const j=await r.json();if(!r.ok){busy(false,'Error: '+j.detail);toast(j.detail);$('side').innerHTML='';return}
  job=j.job;$('tracebtn').disabled=true;$('cancelbtn').style.display='';busy(true,'Trace queued…');poll(job)}
@@ -268,7 +289,7 @@ function gauge(score,level){const s=Math.max(0,Math.min(100,score||0));const col
  <text x="60" y="54" text-anchor="middle" font-size="24" font-weight="800" fill="#fff">${s}</text><text x="60" y="70" text-anchor="middle" font-size="9" fill="${col}" letter-spacing="1.5">${(level||'').toUpperCase()}</text></svg>`}
 const tagH=k=>k&&CAT[k]?`<span class="tag" style="color:${CAT[k][0]};border-color:${CAT[k][0]}55;background:${CAT[k][0]}18">${CAT[k][1]} ${CAT[k][2]}</span>`:'';
 const chainTag=c=>c&&CH[c]?`<span class="badge ${c}">${CH[c].sym} ${CH[c].n}</span>`:'';
-const addrLine=(a,c,tx)=>`<div class="addr"><span class="mono">${esc(a)}</span><button class="copy" title="Copy" onclick="copy('${esc(a)}')">⧉</button>${c&&CH[c]?`<a class="copy" title="Open in explorer" target="_blank" rel="noopener" href="${(tx?CH[c].tx:CH[c].ad)+esc(a)}">↗</a>`:''}</div>`;
+const addrLine=(a,c,tx)=>(a=bareId(a),`<div class="addr"><span class="mono">${esc(a)}</span><button class="copy" title="Copy" onclick="copy('${esc(a)}')">⧉</button>${c&&CH[c]?`<a class="copy" title="Open in explorer" target="_blank" rel="noopener" href="${(tx?CH[c].tx:CH[c].ad)+esc(a)}">↗</a>`:''}</div>`);
 function srcList(sources){if(!sources||!sources.length)return'';return '<div class="dim" style="font-size:11.5px;margin-top:8px">'+[...new Set(sources.map(s=>s.source+' · '+s.licence))].map(esc).join('<br>')+'</div>'}
 function suggH(sg,compact){if(!sg)return'';const ev=sg.evidence||{};const pct=Math.floor((sg.confidence||0)*100);
  const li=[ev.sweeps!=null&&`${ev.sweeps} of ${ev.outflows??'?'} outflow(s) went to ${esc(sg.entity)} wallet <span class="mono">${short(ev.hub||'')}</span>`,ev.in_senders!=null&&`${ev.in_senders} distinct sender(s) in`,ev.out_counterparties!=null&&`${ev.out_counterparties} outgoing counterparty(ies)`,ev.gas_topup_from_exchange&&'gas top-up received from an exchange wallet',ev.usd_swept!=null&&`${usd(ev.usd_swept)} swept${ev.usd_in?' of '+usd(ev.usd_in)+' received':''}`].filter(Boolean);
@@ -385,7 +406,7 @@ cy.on('tap','node',e=>{const id=e.target.id();$('det').insertAdjacentHTML('befor
 cy.on('tap','edge',e=>{const id=e.target.id();$('det').insertAdjacentHTML('beforeend',noteUI('edges',id));let h;$('noteTxt').oninput=ev=>{clearTimeout(h);h=setTimeout(()=>setNote('edges',id,ev.target.value),400)}});
 cy.on('dragfree','node',()=>autosave());
 // ---------- AutoTrace ----------
-async function autoTrace(){const q=$('q').value.trim();if(!q)return;let dir=$('dir').value;if(dir==='both'){dir='forward';toast('AutoTrace follows one direction: using forward')}
+async function autoTrace(){const q=normQ();if(!q)return;let dir=$('dir').value;if(dir==='both'){dir='forward';toast('AutoTrace follows one direction: using forward')}
  mode='auto';share();cy.elements().remove();expanded.clear();$('det').innerHTML='';skeleton();
  const p=`q=${encodeURIComponent(q)}&direction=${dir}&max_hops=${$('amax').value}&min_usd=${+$('amin').value||0}&topk=${$('topk').value}`;
  const r=await fetch('/api/autotrace?'+p,{method:'POST'});const j=await r.json();if(!r.ok){busy(false,'Error: '+j.detail);toast(j.detail);$('side').innerHTML='';return}
@@ -403,7 +424,8 @@ function exportEndpoints(){const j=lastTrace;if(!j||!j.endpoints)return;const ro
  dl(base()+'-endpoints.csv',new Blob([rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'}))}
 
 // ---------- deep links ----------
-(function(){const p=new URLSearchParams(location.search);const q=p.get('q');if(p.get('hops'))$('hops').value=p.get('hops');if(p.get('dir'))$('dir').value=p.get('dir');
+(function(){const p=new URLSearchParams(location.search);let q=p.get('q');const pc=p.get('chain');if(pc&&$('chainSel').querySelector(`option[value="${pc}"]`)){$('chainSel').value=pc;if(q&&EVMX.includes(pc)&&/^0x/.test(q))q=pc+':'+q}
+ if(pc==='all'&&q&&/^0x[0-9a-fA-F]{40}$/.test(q)){$('q').value=q;setBadge();window.CT_SCAN_PENDING=q;return}if(p.get('hops'))$('hops').value=p.get('hops');if(p.get('dir'))$('dir').value=p.get('dir');
  if(p.get('topk'))$('topk').value=p.get('topk');if(p.get('from'))$('df').value=p.get('from');if(p.get('to'))$('dt').value=p.get('to');
  if(p.get('amax'))$('amax').value=p.get('amax');if(p.get('amin'))$('amin').value=p.get('amin');
  if(p.get('case')){openCase(p.get('case'));return}
@@ -411,4 +433,4 @@ function exportEndpoints(){const j=lastTrace;if(!j||!j.endpoints)return;const ro
   (async()=>{await go();for(const a of list.slice(1)){try{const d=await api(a);add(d,null)}catch(e){}}
    if(p.get('mode')==='auto'||p.get('autotrace')==='1')autoTrace()})();return}}
  if(q){$('q').value=q;setBadge();p.get('mode')==='trace'?traceN():p.get('mode')==='auto'?autoTrace():go()}})();
-</script><script src="/static/v6.js"></script><script src="/static/bridge.js"></script><script src="/static/report.js"></script><script src="/static/watch.js"></script><script src="/static/screen.js"></script><script src="/static/swaps.js"></script><script src="/static/loss.js"></script><script src="/static/peel.js"></script></body></html>
+</script><script src="/static/v6.js"></script><script src="/static/bridge.js"></script><script src="/static/report.js"></script><script src="/static/watch.js"></script><script src="/static/screen.js"></script><script src="/static/swaps.js"></script><script src="/static/loss.js"></script><script src="/static/peel.js"></script><script src="/static/evm.js"></script></body></html>

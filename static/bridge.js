@@ -12,7 +12,7 @@ const XC={base:['#3d7bff','Base','B','https://basescan.org/tx/','https://basesca
  xrp:['#cfd8e3','XRP','✕','https://xrpscan.com/tx/','https://xrpscan.com/account/'],thor:['#33ff99','THOR','ᚱ','https://runescan.io/tx/','https://runescan.io/address/'],
  sui:['#4da2ff','Sui','S','https://suiscan.xyz/mainnet/tx/','https://suiscan.xyz/mainnet/account/'],gaia:['#6f7390','Cosmos','⚛','https://www.mintscan.io/cosmos/tx/','https://www.mintscan.io/cosmos/address/']};
 for(const[k,[c,n,sym,tx,ad]]of Object.entries(XC))if(!CH[k])CH[k]={c,n,sym,tx,ad,foreign:1};
-const NATIVE=['btc','eth','sol','tron','xrp'];
+const NATIVE=['btc','eth','sol','tron','xrp','bsc','arb','base','polygon','op'];   // expandable chains (BSC/L2 ids are chain-prefixed)
 const css=document.createElement('style');css.textContent=`
 .badge.xc{color:#9fe7f5;border-color:rgba(34,211,238,.45);background:rgba(34,211,238,.08)}
 .xcard{overflow-wrap:anywhere;min-width:0;border:1px solid rgba(34,211,238,.35);box-shadow:0 0 0 1px rgba(34,211,238,.08) inset}
@@ -32,7 +32,7 @@ const css=document.createElement('style');css.textContent=`
 document.head.appendChild(css);
 const ctag=c=>c&&CH[c]?`<span class="badge ${CH[c].foreign?'xc':c}">${CH[c].sym} ${CH[c].n}</span>`:`<span class="badge xc">${esc(c||'?')}</span>`;
 const rawId=id=>{const m=/^([a-z0-9]+):(.+)$/.exec(id||'');return m&&!id.startsWith('tx:')&&CH[m[1]]?[m[1],m[2]]:[null,id]};
-const isForeign=id=>{const[c]=rawId(id);return !!c||!NATIVE.includes(chainOf[id]||'eth')};
+const isForeign=id=>{const[c]=rawId(id);return c?!NATIVE.includes(c):!NATIVE.includes(chainOf[id]||'eth')};
 // ---------- graph style ----------
 cy.style().selector('edge[?xchain]').style({'line-style':'dashed','line-dash-pattern':[8,5],'line-color':'#22d3ee','target-arrow-color':'#22d3ee',color:'#9fe7f5','curve-style':'unbundled-bezier','control-point-distances':[40],'z-index':7,width:e=>Math.max(2.2,ew(e))})
  .selector('edge[?heur]').style({'line-style':'dotted','line-color':'#f6c945','target-arrow-color':'#f6c945',color:'#f6dd8a'})
@@ -111,7 +111,7 @@ const _renderB=window.render;window.render=function(d){_renderB(d);try{
   if(r&&!r.querySelector('.xbtn'))r.insertAdjacentHTML('beforeend',`<button class="btn sm xbtn" onclick="ctXActivity('${esc(d.address)}')">⇄ Cross-chain activity</button>`)}}catch(e){console.warn(e)}};
 // ---------- AutoTrace: follow bridges (deterministic only) ----------
 const seg=$('amin')?.parentElement;if(seg&&!$('xfollow'))seg.insertAdjacentHTML('beforeend',` <label class="chk" title="Continue the trace across bridges when the bridge's own indexer links the destination (deterministic matches only)"><input type="checkbox" id="xfollow" checked> ⇄ bridges</label>`);
-window.autoTrace=async function(){const q=$('q').value.trim();if(!q)return;let dir=$('dir').value;if(dir==='both'){dir='forward';toast('AutoTrace follows one direction: using forward')}
+window.autoTrace=async function(){const q=normQ();if(!q)return;let dir=$('dir').value;if(dir==='both'){dir='forward';toast('AutoTrace follows one direction: using forward')}
  mode='auto';share();cy.elements().remove();expanded.clear();$('det').innerHTML='';skeleton();
  const p=`q=${encodeURIComponent(q)}&direction=${dir}&max_hops=${$('amax').value}&min_usd=${+$('amin').value||0}&topk=${$('topk').value}&follow_bridges=${$('xfollow')?.checked?'true':'false'}&follow_change=${$('pfollow')?.checked?'true':'false'}`;
  const r=await fetch('/api/autotrace?'+p,{method:'POST'});const j=await r.json();if(!r.ok){busy(false,'Error: '+j.detail);toast(j.detail);$('side').innerHTML='';return}
