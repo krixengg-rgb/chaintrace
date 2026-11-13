@@ -376,12 +376,15 @@ async def relay_addr(a):
 TX_PROVIDERS = {  # name -> (fn, which hash formats)
  "wormhole": (wormhole_tx, ("eth", "sol")), "debridge": (debridge_tx, ("eth", "sol")), "mayan": (mayan_tx, ("eth", "sol")),
  "across": (across_tx, ("eth",)), "thorchain/maya": (midgard_tx, ("eth", "btc")), "layerzero": (layerzero_tx, ("eth",)), "relay": (relay_tx, ("eth", "sol", "btc")),
+ "canonical": (lambda h: __import__("canonical").canonical_tx(h), ("eth",)),
 }
 ADDR_PROVIDERS = {
  "wormhole": (wormhole_addr, ("eth", "sol")), "debridge": (debridge_addr, ("eth", "sol")), "mayan": (mayan_addr, ("eth", "sol")),
  "across": (across_addr, ("eth",)), "thorchain/maya": (midgard_addr, ("eth", "btc")), "layerzero": (layerzero_addr, ("eth",)), "relay": (relay_addr, ("eth", "sol")),
 }
 SUPPORTED = [
+ {"bridge": "OP Mainnet / Base canonical bridge (OptimismPortal deposits + withdrawals)", "chains": "ETH ⇄ OP, ETH ⇄ Base", "method": "deterministic (L2 deposit hash computed from the L1 log and confirmed on L2; withdrawalHash → L1 prove/finalize logs)", "source": "public RPCs + Ethereum Blockscout logs"},
+ {"bridge": "Arbitrum One canonical bridge (ETH deposits, withdrawals incl. token gateways)", "chains": "ETH ⇄ ARB", "method": "deterministic (ArbitrumDepositTx hash computed + confirmed; L2ToL1Tx position → Outbox execution)", "source": "public RPCs + Ethereum Blockscout logs"},
  {"bridge": "Wormhole (Portal, NTT, CCTP, Connect)", "chains": "ETH, SOL, L2s, BSC, …", "method": "deterministic", "source": "api.wormholescan.io"},
  {"bridge": "deBridge DLN", "chains": "ETH, SOL, L2s, BSC", "method": "deterministic", "source": "stats-api.dln.trade"},
  {"bridge": "Mayan (Swift, MCTP, WH)", "chains": "ETH, SOL, L2s", "method": "deterministic", "source": "explorer-api.mayan.finance"},
@@ -389,7 +392,7 @@ SUPPORTED = [
  {"bridge": "THORChain / Maya", "chains": "BTC, ETH, BSC, AVAX, DOGE, LTC, …", "method": "deterministic (memo swaps)", "source": "Midgard"},
  {"bridge": "LayerZero / Stargate", "chains": "ETH, L2s, BSC", "method": "deterministic (message id)", "source": "scan.layerzero-api.com"},
  {"bridge": "Relay", "chains": "ETH, SOL, BTC, L2s", "method": "deterministic (best effort, v2 API retiring 24 Nov 2026)", "source": "api.relay.link"},
- {"bridge": "Any other bridge (ERC-20 USDC/USDT/WETH/WBTC to Arbitrum, Optimism, Base, Polygon)", "chains": "ETH → L2", "method": "heuristic: lead only", "source": "public RPC eth_getLogs"},
+ {"bridge": "Any other bridge, incl. Polygon PoS and Arbitrum token-gateway deposits (ERC-20 USDC/USDT/WETH/WBTC to Arbitrum, Optimism, Base, Polygon)", "chains": "ETH → L2", "method": "heuristic: lead only", "source": "public RPC eth_getLogs"},
 ]
 PROV_T = float(os.environ.get("CHAINTRACE_BRIDGE_PROVIDER_TIMEOUT", "9"))
 def _bdb():
@@ -424,6 +427,7 @@ async def _run(provs, arg, fmt):
 async def match_tx(h, chain=None, heuristic=True):
     """all bridge transfers linked to transaction h (either side). Deterministic first; heuristic fallback only if none."""
     h = h.strip(); fmt = chain or ("eth" if _hex_ok(h) else "btc" if _btc_ok(h) else "sol" if _sol_ok(h) else None)
+    if fmt in ("bsc", "arb", "base", "polygon", "op") and _hex_ok(h): fmt = "eth"   # indexers are queried by hash, chain-agnostic for EVM
     if not fmt: raise ValueError("not a transaction hash")
     if fmt == "eth": h = h.lower()
     always = heuristic == "always"
@@ -432,11 +436,11 @@ async def match_tx(h, chain=None, heuristic=True):
     ms, tried = await _run(TX_PROVIDERS, h, fmt)
     hn = h.lower().removeprefix("0x")
     ms = [m for m in ms if hn in ((m["src"].get("tx") or "").lower().removeprefix("0x"), (m["dst"].get("tx") or "").lower().removeprefix("0x"))]   # indexer must echo our hash
-    PN = {"wormholescan": "wormhole", "dln.trade": "debridge", "mayan.finance": "mayan", "across.to": "across", "midgard": "thorchain/maya", "layerzeroscan": "layerzero", "relay.link": "relay"}
+    PN = {"canonical (on-chain)": "canonical", "wormholescan": "wormhole", "dln.trade": "debridge", "mayan.finance": "mayan", "across.to": "across", "midgard": "thorchain/maya", "layerzeroscan": "layerzero", "relay.link": "relay"}
     for t in tried: t["matches"] = sum(1 for m in ms if PN.get(m["provider"]) == t["provider"])
     for m in ms: m["side"] = "src" if (m["src"].get("tx") or "").lower() == h.lower() else ("dst" if (m["dst"].get("tx") or "").lower() == h.lower() else "src")
-    res = {"query": h, "chain": fmt, "kind": "tx", "matches": ms, "tried": tried, "heuristic": [], "heuristic_note": None}
-    if (always or (not ms and heuristic)) and fmt == "eth":
+    res = {"query": h, "chain": chain or fmt, "kind": "tx", "matches": ms, "tried": tried, "heuristic": [], "heuristic_note": None}
+    if (always or (not ms and heuristic)) and fmt == "eth" and chain in (None, "eth"):
         try: res["heuristic"], res["heuristic_note"] = await asyncio.wait_for(heuristic_eth(h), 14)
         except asyncio.TimeoutError: res["heuristic_note"] = "heuristic search timed out"
         except Exception as e: res["heuristic_note"] = f"heuristic search failed: {type(e).__name__}: {e}"

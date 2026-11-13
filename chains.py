@@ -692,7 +692,8 @@ async def evm_address(a, cursor=None, f=None, to=None, pages=1, chain="eth"):
     mark("prices")
     if BSU and chain != "eth" and _bs_base(chain) != BSU and not cursor: BSU = None   # the explorer refused us during this lookup (bot protection)
     if not BSU:   # no explorer for this chain right now: the keyless fallback *is* the source (not a failure); no explorer cursor
-        failed -= {"transactions", "token transfers"}; pending = [x for x in pending if x not in ("transactions", "token transfers")]
+        failed -= {"transactions", "token transfers", "internal transactions"}; pending = []
+        miss = [m for m in miss if m not in ("internal transactions", "address info", "counters")]
         out["explorer"] = None; out["history_note"] = _NOBS_NOTE.get(cfg["fallback"], "")
         cur = {"t": "done", "k": "done", "i": "done"}
     else: out["explorer"] = BSU.split("/api/v2")[0]
