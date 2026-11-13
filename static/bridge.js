@@ -61,7 +61,7 @@ function matchH(m,i,opts={}){const h=m.method==='heuristic';
 const CAVEAT='<div class="caveat">⚠ Deterministic = linked by the bridge’s own indexer (message / order id). <b>Heuristic matches are investigative leads, not evidence</b>: amount + time + same-address coincidence only. Verify on both explorers before relying on any link.</div>';
 let LAST=[];   // matches currently listed (index = button arg)
 window.ctBridgeAdd=i=>{const m=LAST[i];if(!m||!m.graph)return;add(m.graph,null);const e=m.graph.edges[0];if(e){const x=cy.getElementById(e.source+'>'+e.target+(e.unit||''));if(x.length){cy.elements().unselect();x.select();cy.animate({fit:{eles:x.connectedNodes(),padding:90}},{duration:400})}}toast(m.method==='heuristic'?'Lead added (dashed amber)':'Cross-chain hop added')};
-window.ctBridgeTrace=i=>{const m=LAST[i];if(!m)return;$('q').value=m.dst.address;setBadge();go()};
+window.ctBridgeTrace=i=>{const m=LAST[i];if(!m)return;const c=m.dst.chain;$('q').value=(typeof EVMX!=='undefined'&&EVMX.includes(c)?c+':':'')+m.dst.address;if(c==='eth'&&$('chainSel'))$('chainSel').value='auto';setBadge();go()};
 function listH(j,title,opts={}){const ms=j.matches||[],hs=j.heuristic||[];const all=ms.concat(hs);const base=LAST.length;LAST=LAST.concat(all);
  const tried=(j.tried||[]).map(t=>`${esc(t.provider)}${t.error?' ⚠':''}`).join(' · ');
  return `<div class="card glass xcard" id="${opts.id||''}"><h3>⇄ ${title}<span class="sp"></span><span class="dim" style="text-transform:none;letter-spacing:0">${all.length} match(es)${j.cached?' · cached':''}</span></h3>
