@@ -224,6 +224,19 @@ async def make_report(request: Request):
     return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="ChainTrace-report-{name}.pdf"',
         "X-Report-SHA256": info["pdf_sha256"], "X-Case-SHA256": info["case_sha256"], "X-Report-Pages": str(info["pages"]),
         "Access-Control-Expose-Headers": "X-Report-SHA256, X-Case-SHA256, X-Report-Pages"})
+@app.post("/api/loss")
+async def victim_loss(request: Request):
+    """victim-loss calculator / fund-flow summary over the graph the browser holds.
+    Body: {nodes[], edges[], case{labels}, loss:{victims[], victim_txs[], suspect, method: proportional|fifo|lifo}}"""
+    if int(request.headers.get("content-length") or 0) > 8 * 1024 * 1024: raise HTTPException(413, "payload too large (max 8 MB)")
+    try: p = await request.json()
+    except Exception: raise HTTPException(400, "body must be JSON")
+    if not isinstance(p, dict) or not isinstance(p.get("nodes"), list) or not isinstance(p.get("edges"), list) or not isinstance(p.get("loss"), dict): raise HTTPException(400, "expected {nodes[], edges[], loss{...}}")
+    if len(p["nodes"]) > 3000 or len(p["edges"]) > 6000: raise HTTPException(413, "graph too large (max 3000 nodes / 6000 edges)")
+    import loss
+    try: return await asyncio.wait_for(loss.compute(p, p["loss"]), LOOKUP_TIMEOUT + 10)
+    except ValueError as ex: raise HTTPException(400, str(ex))
+    except asyncio.TimeoutError: raise HTTPException(504, "loss calculation timed out")
 @app.post("/api/eth/swaps")
 async def eth_swaps(request: Request):
     """decode likely DEX swaps into readable steps. Body {txs:[hash,...<=12], trader:"0x.."}. Free data: public RPC receipts + eth_call."""

@@ -161,10 +161,10 @@ async def btc_address(a, limit=25):
             "txs":hist,"nodes":list(nodes.values()),"edges":edges,"cluster":sorted(cluster)}
 async def btc_tx(h):
     tx = await get(f"{MP}/tx/{h}"); ins, outs = btc_edges(tx); nodes = {}; edges = []
-    tid = "tx:" + h
+    tid = "tx:" + h; bt = tx["status"].get("block_time")
     nodes[tid] = {"id": tid, "chain":"btc","kind":"tx","name":"tx "+h[:10],"tags":[],"risk":0}
-    for i, v in ins.items(): edges.append({"source": i, "target": tid, "amount": v/1e8, "unit": "BTC", "tx": h})
-    for o, v in outs.items(): edges.append({"source": tid, "target": o, "amount": v/1e8, "unit": "BTC", "tx": h})
+    for i, v in ins.items(): edges.append({"source": i, "target": tid, "amount": v/1e8, "unit": "BTC", "tx": h, "time": bt})
+    for o, v in outs.items(): edges.append({"source": tid, "target": o, "amount": v/1e8, "unit": "BTC", "tx": h, "time": bt})
     for e in edges:
         for k in ("source","target"): nodes.setdefault(e[k], node("btc", e[k]))
     return {"chain":"btc","tx":h,"fee":tx.get("fee",0)/1e8,"time":tx["status"].get("block_time"),"unit":"BTC",

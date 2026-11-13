@@ -7,6 +7,17 @@ Render: `render.yaml` blueprint. The label DB (~200 MB) is not in git; it is bui
 (`update_labels.py`; unclear-licence sources excluded). Set `CHAINTRACE_USER` / `CHAINTRACE_PASSWORD` in the Render dashboard.
 The free tier disk is ephemeral: the HTTP cache and in-memory trace jobs reset on restart/sleep.
 
+## Victim-loss calculator / fund-flow summary (v14)
+Tap **💷 Loss** in the header (or a node → **💷 Victim** / **🎯 Suspect**, or a flow → **💷 Victim payment**). Mark one or more victim addresses and/or victim payment tx hashes, optionally the suspect start address, pick the tracing method and press **Calculate**.
+- **Totals per asset**: coin amount, value on the day of each payment (Coinbase Exchange daily close for BTC/ETH/SOL/XRP and wrapped versions; stablecoins at par) and today (Coinbase spot), in GBP (ECB reference rate via the Frankfurter API, previous working day at weekends) and USD. Times in UK time and UTC.
+- **Where the funds went**: exchanges/VASPs (with suggested-deposit leads and XRP destination tags), bridges, decoded swaps (value carried across), mixers, sanctioned addresses, still held (capped at the address balance, checked live for the native coin), last seen, and left the graph. A reconciliation shows lost vs accounted for per asset (the difference is normally fees).
+- **Hop-by-hop table** with the victim share of every flow and the basis (on-chain transfer, swap, bridge hop) and any lead flags (heuristic bridge/peel edges, inferred deposit labels).
+- **Method** (stated in every output): proportional / haircut (default), FIFO or LIFO, applied per address and asset in time order over the flows on the graph. Value only crosses assets at decoded swaps and bridge hops; an implied conversion at an ordinary address is not followed.
+- **Outputs**: mobile-friendly panel, CSV (`victim_loss_summary.csv`), a "Victim loss and fund-flow summary" section in the PDF report and the UK evidence pack (included while victims are marked).
+- **API**: `POST /api/loss` with `{nodes[], edges[], case{labels}, loss:{victims[], victim_txs[], suspect, method}}`. Deep link: `?case=<slug>&loss=1&victims=a,b&vtx=<hash>&suspect=<addr>&method=fifo`.
+- Limits: only the flows on the graph are used (expand or AutoTrace first); flows merged on the graph (×N) are treated as one transfer at their last date; held balances are native-coin only.
+- Test: `LP=... python3 uitest_loss.py` (CT_URL for another server).
+
 ## Sanctions screening and community reports (v11)
 Every address ChainTrace shows is screened against official sanctions lists and community scam reports.
 - **Sanctions (hard flag, red):** digital-currency addresses from the US Treasury **OFAC SDN list** (official Advanced XML: entry name, ID, programmes, designation date) and the **UK Sanctions List** (FCDO CSV, which replaced the OFSI Consolidated List on 28 Jan 2026; wallets are parsed from the free-text field and kept only if they pass the chain checksum). Built by `update_sanctions.py` into `data/sanctions.json` (shipped baseline, refreshed on deploy and, when older than a day, in a nice'd subprocess at runtime; ~30 MB peak RAM). A match sets the node to *sanctioned* (risk 100), adds a red ⛔ badge, and is listed in the side panel, counterparties panel, risk reasons, AutoTrace (branch stops, root warning), watchlist alerts and the PDF report with the wording "matches OFAC SDN list entry X (as of date): confirm before action". Third-party "sanctioned" tags that are not on the current lists are downgraded to *blocklisted* with a "possibly delisted" note.

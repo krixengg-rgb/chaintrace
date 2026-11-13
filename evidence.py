@@ -330,6 +330,7 @@ def how_to(le, V, info, gen, names):
          "   A production order is made by a judge on your application. These drafts are only the description of material and the request text.",
          "3. vasp_schedule.csv lists every exchange / VASP address in the graph with tags, memos, amounts, hashes and first/last seen (UK and UTC) for your own records or an application schedule.",
          "4. On-chain data and third-party labels are intelligence leads, not evidence. Items marked 'INFERRED' are ChainTrace model suggestions. Corroborate with the firm's own records.",
+         "4a. victim_loss_summary.csv (only when a victim-loss summary was run) gives the total lost per asset (on the day and today, GBP and USD), where the funds went, what is still held and the hop-by-hop table. It states the tracing method used (proportional, FIFO or LIFO): quote that method with any figure.",
          "5. Overseas firms may need mutual legal assistance (Letter of Request via the Home Office UK Central Authority). Take your own legal advice before use.", "",
          f"Exchanges / VASPs found in this case: {len(V)}"]
     for v in V: L.append(f"  - {v['entity']}: {len(v['addresses'])} address(es)" + (" (inferred leads only)" if v["lead_only"] else ""))
@@ -353,6 +354,7 @@ async def build_pack(p):
         except Exception as ex: info.setdefault("notes", []).append(f"DOCX unavailable ({type(ex).__name__}); plain text only")
         files.append((base + ".txt", blocks_to_txt(B).encode("utf-8")))
     files.append(("vasp_schedule.csv", schedule_csv(V)))
+    if info.get("loss") and info["loss"].get("csv"): files.append(("victim_loss_summary.csv", info["loss"]["csv"].encode("utf-8")))
     names = [n for n, _ in files] + ["HOW_TO_USE.txt", "SHA256SUMS.txt"]
     files.append(("HOW_TO_USE.txt", how_to(le, V, info, gen, names)))
     sums = "".join(f"{hashlib.sha256(b).hexdigest()}  {n}\n" for n, b in files).encode()
@@ -363,5 +365,6 @@ async def build_pack(p):
         for n, b in files:
             zi = zipfile.ZipInfo(f"ChainTrace-evidence-pack-{ref}/{n}", date_time=dt); zi.compress_type = zipfile.ZIP_DEFLATED; z.writestr(zi, b)
     out = zb.getvalue()
+    info = {k: v for k, v in info.items() if k != "loss"}
     return out, {**info, "zip_sha256": hashlib.sha256(out).hexdigest(), "vasps": [{"entity": v["entity"], "addresses": len(v["addresses"]), "lead_only": v["lead_only"]} for v in V],
                  "files": names, "ref": ref}

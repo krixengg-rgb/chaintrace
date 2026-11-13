@@ -11,7 +11,7 @@ from fpdf import FPDF, FontFace
 from fpdf.enums import XPos, YPos
 import chains, labels, bridges, screen
 
-VERSION = "0.9.0"
+VERSION = "0.10.0"
 H = os.path.dirname(os.path.abspath(__file__))
 UK = ZoneInfo("Europe/London")
 def _commit():
@@ -228,6 +228,90 @@ def kv(pdf, rows, w=(46, None)):
         for k, v, *st in rows:
             r = t.row(); r.cell(k, style=FontFace(emphasis="B", color=NAVY)); r.cell(v if v not in (None, "") else "–", style=st[0] if st else None)
 
+def gbp(x): return "–" if x is None else f"£{x:,.2f}"
+def loss_section(pdf, L):
+    """Victim loss and fund-flow summary: totals, destinations, held balances, hop-by-hop table, method (statement-friendly wording)."""
+    pdf.h1("Victim loss and fund-flow summary")
+    pay = L["payments"]; ts = [x["time"] for x in pay if x.get("time")]
+    amt = "; ".join(f"{num(T['amount'])} {T['asset']}" for T in L["totals"])
+    s_ = (f"From the transactions on this graph, {sum(T['payments'] for T in L['totals'])} payment(s) were made from the victim address(es) "
+          + (f"between {t_line(min(ts))} and {t_line(max(ts))} " if ts and min(ts) != max(ts) else (f"on {t_line(ts[0])} " if ts else ""))
+          + f"totalling {amt}.")
+    if L.get("total_gbp_then") is not None:
+        s_ += f" Valued on the day of each payment this was {gbp(L['total_gbp_then'])} ({usd(L['total_usd_then'])})" + ("" if L["then_complete"] else ", for the payments that have a daily price") + "."
+    if L.get("total_gbp_now") is not None:
+        g = L.get("gbp_rate_now") or {}
+        s_ += f" At today's prices ({L['generated_uk'][:10]}) it is worth {gbp(L['total_gbp_now'])} ({usd(L['total_usd_now'])})."
+    pdf.para(s_, size=9)
+    held = L.get("held") or []
+    if held: pdf.para(f"Of the funds traced, {gbp(L.get('held_gbp_now'))} ({usd(L.get('held_usd_now'))}) at today's prices is attributed to {len(held)} address(es) that still hold at least that amount (see “Still held”).", size=9)
+    pdf.box(f"Tracing method: {L['method_name']}. {L['method_text']} The figures attributed to victim funds below depend on this method; FIFO, LIFO and proportional are all "
+            "recognised conventions and can give different figures. Quote the method with any figure.", color=TEAL, title="Method")
+    pdf.h2("Total lost per asset")
+    with pdf.tbl((16, 30, 12, 31, 31, 31, pdf.epw - 151), size=7.4) as t:
+        r = t.row(); [r.cell(x) for x in ("Asset", "Amount", "No.", "On the day (GBP)", "On the day (USD)", "Today (GBP)", "Today (USD)")]
+        for T in L["totals"]:
+            r = t.row(); r.cell(T["asset"], style=BOLD); r.cell(num(T["amount"])); r.cell(str(T["payments"]))
+            part = "" if T["then_complete"] or T["usd_then"] is None else "\n(part)"; r.cell(gbp(T["gbp_then"]) + part); r.cell(usd(T["usd_then"]) + part); r.cell(gbp(T["gbp_now"])); r.cell(usd(T["usd_now"]))
+    pdf.h2(f"Victim payments ({len(pay)})")
+    with pdf.tbl((28, 44, 38, 24, 24, pdf.epw - 158), size=6.6, lh=3.1) as t:
+        r = t.row(); [r.cell(x) for x in ("Time (UK / UTC)", "Transaction", "To", "Amount", "On the day", "Today")]
+        for x in pay[:60]:
+            r = t.row(); r.cell(t_both(x["time"]) if x.get("time") else "no date on graph")
+            r.cell(wrap_hex(x.get("tx") or "–", 32), style=MONOS, link=tx_url(x.get("chain"), x.get("tx")))
+            r.cell((x.get("to_label") + "\n" if x.get("to_label") else "") + wrap_hex(x["to"], 26), style=MONOS)
+            r.cell(f"{num(x['amount'])} {x['asset']}" + (f"\n×{x['count']} merged" if x.get("aggregated") else "")); r.cell(gbp(x["gbp_then"]) + ("\n" + usd(x["usd_then"]) if x["usd_then"] is not None else "")); r.cell(gbp(x["gbp_now"]))
+    pdf.h2("Where the funds went")
+    with pdf.tbl((44, 42, 30, 14, pdf.epw - 130), size=7.2) as t:
+        r = t.row(); [r.cell(x) for x in ("Destination", "Amount (victim funds)", "Today (GBP)", "% of loss", "Notes")]
+        for c in L["categories"]:
+            r = t.row(); r.cell(c["name"], style=BOLD); r.cell("; ".join(f"{num(a)} {u}" for u, a in c["by_asset"].items()))
+            r.cell(gbp(c.get("gbp_now"))); r.cell(f"{c['pct_of_loss']}%" if c.get("pct_of_loss") is not None else "–"); r.cell(("Includes leads. " if c["lead"] else "") + c["wording"], style=LEADF if c["lead"] else None)
+    dest = [d for d in L["destinations"] if d["cat"] in ("exchange", "bridge", "mixer", "sanctioned", "returned")]
+    if dest:
+        pdf.h2("Exchanges, VASPs and other endpoints")
+        with pdf.tbl((22, 28, 48, 24, 26, pdf.epw - 148), size=6.6, lh=3.1) as t:
+            r = t.row(); [r.cell(x) for x in ("Category", "Entity / label", "Address", "Amount", "Today (GBP)", "Deposit ref / notes")]
+            for d in dest[:80]:
+                r = t.row(); r.cell(d["cat_name"]); r.cell(d.get("entity") or d.get("label") or "Unlabelled")
+                r.cell(f"{code(d.get('chain'))} " + wrap_hex(d["id"], 30), style=MONOS, link=addr_url(d.get("chain"), d["id"])); r.cell(f"{num(d['amount'])} {d['unit']}"); r.cell(gbp(d.get("gbp_now")))
+                note = []
+                if d.get("destination_tags"): note.append("XRP destination tag(s): " + ", ".join(d["destination_tags"]) + " (identifies the customer at the VASP)")
+                if d.get("sanctions"): note += [str(x) for x in d["sanctions"]]
+                if d.get("lead"): note.append("; ".join(d["lead"]) + ". " + LEAD)
+                r.cell("\n".join(note) or "–", style=LEADF if d.get("lead") else None)
+    if held:
+        pdf.h2("Still held in identified wallets (restraint / freezing)")
+        pdf.para("Victim funds attributed (by the method above) to addresses that still hold at least that amount. Balances move: re-check immediately before any application.", size=7.6, color=GREY)
+        with pdf.tbl((50, 28, 28, 30, pdf.epw - 136), size=6.8, lh=3.2) as t:
+            r = t.row(); [r.cell(x) for x in ("Address", "Victim funds", "Address balance", "Today (GBP)", "Balance source")]
+            for d in held:
+                r = t.row(); r.cell(f"{code(d.get('chain'))} " + ((d.get("label") + "\n") if d.get("label") else "") + wrap_hex(d["id"], 34), style=MONOS, link=addr_url(d.get("chain"), d["id"]))
+                r.cell(f"{num(d['amount'])} {d['unit']}"); r.cell(f"{num(d.get('balance'))} {d['unit']}"); r.cell(gbp(d.get("gbp_now")))
+                r.cell("checked live at " + t_line(d["balance_time"]) if d.get("balance_src") == "live" and d.get("balance_time") else "as recorded on the graph (time of lookup)")
+    if L.get("swaps"):
+        pdf.h2("Swaps on the route"); pdf.bullets([f"{x.get('text') or ''} ({x.get('venue') or ''}), tx {x.get('tx') or ''}" + ("" if x.get("decoded") else " – partly inferred") for x in L["swaps"]], size=7.6)
+    pdf.add_page(orientation="L"); pdf.h2(f"Hop-by-hop table ({len(L['hops'])} flows carrying victim funds)")
+    pdf.para("Hop 0 is the victim payment. ‘Victim funds’ is the part of each transfer attributed to the victim under the stated method; ‘%’ is that part as a share of the transfer.", size=7.4, color=GREY)
+    with pdf.tbl((8, 30, 50, 40, 40, 24, 24, 10, pdf.epw - 226), size=6.1, lh=2.9) as t:
+        r = t.row(); [r.cell(x) for x in ("Hop", "Time (UK / UTC)", "Transaction", "From", "To", "Amount", "Victim funds", "%", "Basis / onward")]
+        for h in L["hops"][:250]:
+            lead = bool(h["lead"])
+            r = t.row(); r.cell(str(h["hop"])); r.cell(t_both(h["time"]) if h.get("time") else "–")
+            r.cell(wrap_hex(h.get("tx") or "–", 32), style=MONOS, link=tx_url(h.get("chain"), h.get("tx")))
+            r.cell(((h["from_label"] + "\n") if h.get("from_label") else "") + wrap_hex(h["from"], 24), style=MONOS); r.cell(((h["to_label"] + "\n") if h.get("to_label") else "") + wrap_hex(h["to"], 24), style=MONOS)
+            r.cell(f"{num(h['amount'])} {h['asset']}" + (f" ×{h['count']}" if h["count"] > 1 else "")); r.cell(f"{num(h['tainted'])} {h['asset']}"); r.cell(f"{h['pct']}" if h.get("pct") is not None else "–")
+            r.cell(h["basis"] + " → " + h["onward"] + (("\nLEAD: " + "; ".join(h["lead"])) if lead else "") + (f"\ntag {h['destination_tag']}" if h.get("destination_tag") is not None else ""), style=LEADF if lead else None)
+    rc = L.get("reconciliation") or []
+    if rc:
+        pdf.h2("Reconciliation"); pdf.para("Per asset: amount lost, amount accounted for in the destinations above (plus any converted to another asset by a swap or bridge), and the difference "
+                                           "(normally network fees and rounding).", size=7.4, color=GREY)
+        with pdf.tbl((26, 39, 39, 39, 39), size=7) as t:
+            r = t.row(); [r.cell(x) for x in ("Asset", "Lost", "Accounted for", "Converted out", "Difference")]
+            for x in rc: r = t.row(); r.cell(x["asset"]); r.cell(num(x["lost"])); r.cell(num(x["accounted"])); r.cell(num(x["converted_out"])); r.cell(num(x["difference"]))
+    if L.get("warnings"): pdf.h2("Notes on this calculation"); pdf.bullets(L["warnings"], size=7.4)
+    pdf.box(" ".join(L["caveats"]) + " Prices: " + L["price_sources"], color=AMBER, title="Limits of this summary")
+
 async def build(p):
     """p: case payload from the browser. Returns (pdf_bytes, info)."""
     gen = time.time(); errs = []
@@ -239,6 +323,7 @@ async def build(p):
     le = evidence.clean_le(meta_in.get("le")); pack = bool(meta_in.get("evidence_pack"))
     if isinstance(p.get("meta"), dict) and (le or "le" in p["meta"]): p["meta"]["le"] = le   # hashed exactly as printed
     data = {k: p.get(k) for k in ("case", "nodes", "edges", "trace", "meta", "log")}
+    if isinstance(p.get("loss"), dict): data["loss"] = p["loss"]   # victim-loss spec (victims, payments, suspect, method)
     data_bytes = canon(data); data_sha = hashlib.sha256(data_bytes).hexdigest()
     png = None; png_sha = None
     if isinstance(p.get("png"), str) and p["png"].startswith("data:image/png;base64,"):
@@ -424,6 +509,13 @@ async def build(p):
     if sugg: findings.append(f"{len(sugg)} address(es) carry ChainTrace-inferred (AI/model-suggested) exchange-deposit labels. These are intelligence leads only (Section 5).")
     findings += [f"ChainTrace risk note: {x}" for x in reasons[:6]]
     if findings: pdf.h2("Key findings (automatically generated, verify before reliance)"); pdf.bullets(findings, size=8.3)
+    # ---------- victim loss / fund-flow summary (v14) ----------
+    L = None
+    if isinstance(p.get("loss"), dict) and (p["loss"].get("victims") or p["loss"].get("victim_txs")):
+        import loss as LS
+        try: L = await LS.compute(p, p["loss"])
+        except Exception as ex: errs.append(f"victim-loss summary: {type(ex).__name__}: {str(ex)[:120]}")
+        if L: loss_section(pdf, L)
     # ---------- 2 graph ----------
     pdf.h1("2. Transaction graph")
     if png:
@@ -679,4 +771,4 @@ async def build(p):
                  "UK-registered cryptoasset firms can be checked on the FCA register. Firms outside the UK may need mutual legal assistance.", size=7.6)
     pdf.embed_file(bytes=data_bytes, basename="case_data.json", desc="ChainTrace canonical case data (hashed on the cover)", modification_date=datetime.fromtimestamp(gen, timezone.utc))
     out = bytes(pdf.output())
-    return out, {"case_sha256": data_sha, "png_sha256": png_sha, "pdf_sha256": hashlib.sha256(out).hexdigest(), "pages": pdf.page_no(), "notes": errs}
+    return out, {"case_sha256": data_sha, "png_sha256": png_sha, "pdf_sha256": hashlib.sha256(out).hexdigest(), "pages": pdf.page_no(), "notes": errs, "loss": L}
