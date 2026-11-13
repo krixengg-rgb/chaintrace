@@ -112,7 +112,7 @@ function render(j){const T=j.totals||[];const ts=(j.payments||[]).map(p=>p.time)
  $('lossres').innerHTML=h;setTimeout(()=>{const s=$('lossres').querySelector('.stmt');if(s&&matchMedia('(max-width:700px)').matches)s.scrollIntoView({block:'start',behavior:'smooth'})},60)}
 // restore marks with a case; deep link ?loss=1&victims=a,b&vtx=h&suspect=x&method=fifo
 const _oc=window.openCase;if(_oc)window.openCase=async function(id){const r=await _oc.apply(this,arguments);try{if(curCase&&curCase.loss){Object.assign(S,curCase.loss,{suspect:curCase.loss.suspect||'',result:null});decor()}}catch(e){}return r};
-const P=new URLSearchParams(location.search);
+const P=new URLSearchParams(window.CT_URL0||location.search);
 if(P.get('loss')==='1'||P.get('victims')||P.get('vtx')){S.victims=lines(P.get('victims'));S.victim_txs=lines(P.get('vtx'));S.suspect=P.get('suspect')||'';if(['fifo','lifo','proportional'].includes(P.get('method')))S.method=P.get('method');
  let n=0;const iv=setInterval(()=>{n++;const ready=window.cy&&cy.nodes().length>1&&!document.body.classList.contains('busy');
   if(ready){clearInterval(iv);setTimeout(()=>{decor();m.classList.add('on');fillForm();if(S.victims.length||S.victim_txs.length)ctLossGo()},1200)}else if(n>240)clearInterval(iv)},500)}

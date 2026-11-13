@@ -11,7 +11,7 @@ from fpdf import FPDF, FontFace
 from fpdf.enums import XPos, YPos
 import chains, labels, bridges, screen
 
-VERSION = "0.10.0"
+VERSION = "0.11.0"
 H = os.path.dirname(os.path.abspath(__file__))
 UK = ZoneInfo("Europe/London")
 def _commit():
@@ -607,6 +607,36 @@ async def build(p):
                      ] + ([("Notes", "; ".join(map(str, b.get("notes")))[:400])] if b.get("notes") else []), w=(38, None))
     else: pdf.para("No cross-chain bridge hops are recorded in this case.", size=8.5)
     # ---------- 5 entities ----------
+    # ---------- BTC change / peel-chain leads (v15) ----------
+    PE = [e for e in edges if isinstance(e.get("peel"), dict) or isinstance(e.get("change"), dict)]
+    if PE:
+        import peel as PL
+        pdf.h1("Change-address and peel-chain leads (Bitcoin)", landscape=True)
+        pdf.box("Every row in this section is a HEURISTIC LEAD, not attribution. The ‘change’ output of a Bitcoin transaction is inferred from wallet-behaviour heuristics "
+                "that wallets can defeat. Treat links through a likely change output as lines of enquiry and corroborate them (e.g. records from the receiving VASP). " + LEAD + ".", color=AMBER, title="Heuristic lead")
+        chains_ = defaultdict(list)
+        for e in PE: chains_[((e.get("peel") or {}).get("id")) or "–"].append(e)
+        for pid, es in chains_.items():
+            es.sort(key=lambda e: (e.get("time") or 0, (e.get("peel") or {}).get("step") or 0))
+            pe = [x for x in edges if isinstance(x.get("peeled"), dict) and (x["peeled"].get("id") == pid)]
+            isp = any((e.get("peel") or {}).get("is_peel") for e in es)
+            pdf.h2(("Peel chain" if isp else "Likely change hops") + f" {pid if pid not in ('–', 'auto') else ''}: {len(es)} hop(s), {len(pe)} peeled payment(s) totalling {num(sum(x.get('amount') or 0 for x in pe))} BTC")
+            with pdf.tbl((8, 34, 56, 50, 50, 26, pdf.epw - 224), size=6.2, lh=2.9) as t:
+                r = t.row(); [r.cell(x) for x in ("#", "Time (UK / UTC)", "Transaction", "From", "Likely change (to)", "Amount", "Confidence and reasons (lead)")]
+                for k, e in enumerate(es, 1):
+                    c = e.get("change") or {}; cc, fa = cid(e["source"]); _, ta = cid(e["target"])
+                    r = t.row(); r.cell(str((e.get("peel") or {}).get("step") or k)); r.cell(t_both(e.get("time")) if e.get("time") else "–")
+                    r.cell(wrap_hex(e.get("tx") or "–", 32), style=MONOS, link=tx_url("btc", e.get("tx"))); r.cell(wrap_hex(fa, 26), style=MONOS); r.cell(wrap_hex(ta, 26), style=MONOS)
+                    r.cell(f"{num(e.get('amount'))} BTC")
+                    r.cell(f"{round((c.get('confidence') or 0) * 100)}% ({c.get('level') or '?'}) – " + "; ".join(c.get("reasons") or []) + (("; against: " + "; ".join(c.get("against"))) if c.get("against") else ""), style=LEADF)
+            if pe:
+                with pdf.tbl((40, 70, 60, 30, pdf.epw - 200), size=6.2, lh=2.9) as t:
+                    r = t.row(); [r.cell(x) for x in ("Time (UK / UTC)", "Transaction", "Peeled payment to", "Amount", "Label")]
+                    for x in sorted(pe, key=lambda x: x.get("time") or 0)[:80]:
+                        n_ = nodes.get(x["target"]) or {}
+                        r = t.row(); r.cell(t_both(x.get("time")) if x.get("time") else "–"); r.cell(wrap_hex(x.get("tx") or "–", 32), style=MONOS, link=tx_url("btc", x.get("tx")))
+                        r.cell(wrap_hex(cid(x["target"])[1], 34), style=MONOS); r.cell(f"{num(x.get('amount'))} BTC"); r.cell(n_.get("name") or "–")
+        pdf.h2("Method"); pdf.para(PL.METHOD_NOTE, size=7.6)
     pdf.h1("5. Entities and attributions", landscape=True)
     pdf.para("Attributions come from the open label datasets listed in Section 7, the explorer's public tags, bridge vault lists, and labels the investigator added to the case. "
              "A dataset label is a third-party assertion. Confirm it with the VASP or another primary source before relying on it in evidence.", size=7.6, color=GREY)
@@ -680,6 +710,7 @@ async def build(p):
     pdf.h2("Known gaps and limitations")
     pdf.bullets([
         "DEX swaps (Ethereum): decoded from public receipt logs for Uniswap V2/V3/V4, SushiSwap, PancakeSwap, Balancer V2 and Curve, with aggregator routers (1inch, 0x, CoW, ParaSwap, Uniswap Universal Router) named from the called contract. Uniswap V4 pool tokens are not resolved and other DEXes are inferred from transfers only. Swaps are decoded for the most recent likely-swap transactions of each looked-up address, not every historical swap.",
+        "Bitcoin change detection and peel chains: heuristic (address type, round payment, fresh vs reused address, unnecessary input, optimal change, known service, peel pattern). They are leads, never attribution, and are drawn as dotted amber edges.",
         "Coverage: Bitcoin, Ethereum, Solana, TRON and the XRP Ledger are traced natively. EVM L2s and other chains appear as bridge destinations for context. Privacy coins, Lightning, custodial (off-chain) transfers inside exchanges, and OTC desks are not visible.",
         "Labels can be incomplete, out of date or wrong. The absence of a label does not mean an address is unattributed in commercial datasets. Historical rotated THORChain vaults may be unlabelled.",
         "Bridges not covered: Circle CCTP direct, native L2 canonical bridges, and other bridges without a free public indexer. The Relay public API is rate-limited. deBridge and Across cannot be looked up from the destination transaction.",

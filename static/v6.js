@@ -23,6 +23,7 @@ function applyDir(){cy.batch(()=>{cy.edges().removeClass('din dout');if(!V.dir)r
 // ---------- entity grouping ----------
 function entName(s){s=String(s||'').split(/[:|(]/)[0].replace(/\b(hot|cold|deposit)\s*wallet\b/ig,'').replace(/\s+[\d.,]+\s*[kKmM]?\s*[A-Za-z]{2,6}\s*$/,'').replace(/[\s_#-]+\d+\s*$/,'').trim();return s.length>=2?s:null}
 function gkey(n){const i=n.data('info')||{};if(!i.id||String(i.id).startsWith('tx:')||n.data('focus'))return null;   // the focus/root stays outside groups
+ if(i.peel&&i.peel.id)return['peel:'+i.peel.id,'Peel chain · '+(i.peel.hops||'?')+' hops (heuristic lead)','peel'];
  const sg=i.suggested;if(sg){const ent=sg.entity||(sg.label||'').replace(/ deposit$/,'');if(ent)return['dep:'+ent.toLowerCase(),ent+' deposits (suggested)','exchange']}
  if(i.kind&&i.name){const ent=entName(i.name);if(ent)return['ent:'+ent.toLowerCase().replace(/[^a-z0-9]/g,''),ent,i.kind]}
  if(cur&&cur.chain==='btc'&&(cur.cluster||[]).length>1&&cur.cluster.includes(i.id))return['clu:'+cur.address,'Cluster of '+short(cur.address),null];

@@ -8,7 +8,7 @@ SEM = {"sol": 1, "btc": 3, "eth": 3, "tron": 2, "xrp": 2}
 def _sh(x): return x if x.startswith("tx:") else x[:8] + "…"
 MAX_BRIDGE_HOPS = 8
 NATIVE_UNIT = {"btc": "BTC", "eth": "ETH", "sol": "SOL", "tron": "TRX", "xrp": "XRP"}
-async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges=False):
+async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges=False, follow_change=False):
     J = trace.JOBS[job]; c, kind = chains.detect(q); J.update(chain=c, status="running"); t0 = time.time()
     nodes, edges, parent, depth_of = {}, {}, {}, {}
     sems = {k: asyncio.Semaphore(v) for k, v in SEM.items()}; stop = None
@@ -92,6 +92,16 @@ async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, s
                     except Exception as ex: J["errors"].append(f"suggest {a[:10]}: {ex}")
                     if nodes[a].get("kind") in ENDPOINT: J["nodes"] = list(nodes.values()); continue   # high-confidence deposit = endpoint
                 elif a != root and nodes.get(a, {}).get("kind") in ENDPOINT: continue
+                if follow_change and direction == "forward" and ch(a) == "btc":
+                    try: fc = await _follow_change(a, d, J)
+                    except Exception as ex: fc = None; J["errors"].append(f"change {a[:10]}: {type(ex).__name__}")
+                    if fc:
+                        for e, follow_it in fc:
+                            other = e["target"]
+                            if follow_it: take(a, e, other, hop + 1, nxt, lab)
+                            else:   # peeled payment: shown as a branch, not followed
+                                junk = []; take(a, e, other, hop + 1, junk, lab)
+                        J["nodes"], J["edges"] = list(nodes.values()), list(edges.values()); continue
                 if direction == "forward": cand = [e for e in d["edges"] if e["source"] == a and e["target"] != a and keep(e, ch(a))]
                 else: cand = [e for e in d["edges"] if e["target"] == a and e["source"] != a and keep(e, ch(a))]
                 for e in trace._rank(cand, lab, a)[:topk]:
@@ -137,13 +147,32 @@ async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, s
     J.update(nodes=list(nodes.values()), edges=list(edges.values()), paths=paths, endpoints=endpoints[:50], unresolved=len(leaves),
              stop_reason=stop, risk={"score": score, "level": lvl, "reasons": reasons[:12]}, status="done",
              progress=f"done · {len(endpoints)} endpoint(s) · {stop}", elapsed=round(time.time() - t0, 1))
-def start(q, direction="forward", max_hops=6, max_nodes=150, max_secs=120, min_usd=100.0, topk=3, skip_unpriced=True, follow_bridges=False):
+async def _follow_change(a, d, J, min_conf=0.6):
+    """BTC 'follow change': for each spend from `a` on this page, take the likely change output (heuristic lead, amber/dotted) and list the other outputs as peeled
+    payments. Returns [(edge, follow?)] or None when no spend from `a` has a confident change output (the normal ranking is used then)."""
+    import peel
+    spends = [h["tx"] for h in (d.get("txs") or []) if (h.get("delta") or 0) < 0][:4]
+    out = []; J.setdefault("peel", [])
+    for h in spends:
+        tx = await peel.get_tx(h)
+        if not any((v.get("prevout") or {}).get("scriptpubkey_address") == a for v in tx["vin"]): continue
+        sp = await peel._spends(tx); A = await peel.analyse(tx, sp, with_pattern=True); c_ = peel.pick(A, min_conf)
+        if not c_ or c_["address"] == a: continue
+        t = tx["status"].get("block_time")
+        J["peel"].append({"from": a, "tx": h, "change": c_["address"], "value": c_["value"], "confidence": c_["confidence"], "reasons": c_["reasons"]})
+        out.append(({"source": a, "target": c_["address"], "amount": c_["value"], "unit": "BTC", "tx": h, "time": t, "count": 1, "usd": chains.usd_of(c_["value"], "BTC"), "heur": True,
+                     "peel": {"id": "auto", "step": None, "is_peel": False}, "change": {"confidence": c_["confidence"], "level": c_["level"], "reasons": c_["reasons"], "against": c_["against"], "vout": c_["n"]}}, True))
+        for o in A["outputs"]:
+            if o["n"] == c_["n"] or o["address"] == a: continue
+            out.append(({"source": a, "target": o["address"], "amount": o["value"], "unit": "BTC", "tx": h, "time": t, "count": 1, "usd": chains.usd_of(o["value"], "BTC"), "peeled": {"id": "auto"}}, False))
+    return out or None
+def start(q, direction="forward", max_hops=6, max_nodes=150, max_secs=120, min_usd=100.0, topk=3, skip_unpriced=True, follow_bridges=False, follow_change=False):
     trace._prune(); job = uuid.uuid4().hex[:10]
     trace.JOBS[job] = {"id": job, "q": q, "type": "autotrace", "hops": max_hops, "direction": direction, "status": "queued", "progress": "",
                        "nodes": [], "edges": [], "paths": [], "endpoints": [], "errors": [], "started": time.time(), "capped": False,
-                       "params": {"max_hops": max_hops, "max_nodes": max_nodes, "max_secs": max_secs, "min_usd": min_usd, "topk": topk, "skip_unpriced": skip_unpriced, "follow_bridges": follow_bridges}}
+                       "params": {"max_hops": max_hops, "max_nodes": max_nodes, "max_secs": max_secs, "min_usd": min_usd, "topk": topk, "skip_unpriced": skip_unpriced, "follow_bridges": follow_bridges, "follow_change": follow_change}}
     async def _go():
-        try: await asyncio.wait_for(run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges), max_secs + 60)
+        try: await asyncio.wait_for(run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges, follow_change), max_secs + 60)
         except asyncio.CancelledError: trace.JOBS[job].update(status="cancelled", progress="cancelled by user")
         except Exception as ex: trace.JOBS[job].update(status="error", progress=f"{type(ex).__name__}: {ex}")
         finally: trace.TASKS.pop(job, None)

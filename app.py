@@ -150,7 +150,7 @@ async def trace_start(q: str, hops: int = 2, direction: str = "forward", topk: i
     return {"job": trace.start(q.strip(), hops, direction, topk, max_nodes)}
 @app.post("/api/autotrace")
 async def autotrace_start(q: str, direction: str = "forward", max_hops: int = 6, max_nodes: int = 150, max_secs: int = 120,
-                          min_usd: float = 100, topk: int = 3, skip_unpriced: bool = True, follow_bridges: bool = False):
+                          min_usd: float = 100, topk: int = 3, skip_unpriced: bool = True, follow_bridges: bool = False, follow_change: bool = False):
     c, kind = chains.detect(q)
     if not c: raise HTTPException(400, "Unrecognised address / tx hash")
     if direction not in ("forward", "backward"): raise HTTPException(400, "direction must be forward or backward")
@@ -158,7 +158,7 @@ async def autotrace_start(q: str, direction: str = "forward", max_hops: int = 6,
     topk = max(1, min(6, topk)); min_usd = max(0.0, min_usd)
     if sum(1 for j in trace.JOBS.values() if j["status"] in ("queued", "running")) >= MAX_RUNNING_TRACES:
         raise HTTPException(429, "too many traces running, try again shortly")
-    return {"job": autotrace.start(q.strip(), direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges)}
+    return {"job": autotrace.start(q.strip(), direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges, follow_change)}
 @app.get("/api/trace/{job}")
 def trace_get(job: str):
     j = trace.JOBS.get(job)
@@ -237,6 +237,22 @@ async def victim_loss(request: Request):
     try: return await asyncio.wait_for(loss.compute(p, p["loss"]), LOOKUP_TIMEOUT + 10)
     except ValueError as ex: raise HTTPException(400, str(ex))
     except asyncio.TimeoutError: raise HTTPException(504, "loss calculation timed out")
+@app.get("/api/btc/change")
+async def btc_change(tx: str, min_conf: float = 0.6):
+    """change-address heuristics for one Bitcoin transaction (heuristic lead, not attribution)"""
+    import re as _re, peel
+    if not _re.fullmatch(r"[0-9a-fA-F]{64}", tx.strip()): raise HTTPException(400, "give a Bitcoin transaction hash")
+    try: return await asyncio.wait_for(peel.change(tx.strip().lower(), max(0.5, min(0.95, min_conf))), LOOKUP_TIMEOUT)
+    except asyncio.TimeoutError: raise HTTPException(504, "mempool.space too slow right now; retry")
+    except Exception as ex: raise HTTPException(502, f"btc upstream error: {ex}")
+@app.get("/api/btc/peel")
+async def btc_peel(q: str, max_hops: int = 12, min_conf: float = 0.6):
+    """follow likely change outputs (peel chain) from a BTC tx or address; peeled payments are branches. Heuristic lead."""
+    import peel
+    try: return await asyncio.wait_for(peel.follow(q.strip(), max(1, min(25, max_hops)), max(0.5, min(0.95, min_conf)), budget=LOOKUP_TIMEOUT - 4), LOOKUP_TIMEOUT + 2)
+    except ValueError as ex: raise HTTPException(400, str(ex))
+    except asyncio.TimeoutError: raise HTTPException(504, "peel-chain search timed out; retry or start nearer the end")
+    except Exception as ex: raise HTTPException(502, f"btc upstream error: {ex}")
 @app.post("/api/eth/swaps")
 async def eth_swaps(request: Request):
     """decode likely DEX swaps into readable steps. Body {txs:[hash,...<=12], trader:"0x.."}. Free data: public RPC receipts + eth_call."""

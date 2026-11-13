@@ -113,7 +113,7 @@ const _renderB=window.render;window.render=function(d){_renderB(d);try{
 const seg=$('amin')?.parentElement;if(seg&&!$('xfollow'))seg.insertAdjacentHTML('beforeend',` <label class="chk" title="Continue the trace across bridges when the bridge's own indexer links the destination (deterministic matches only)"><input type="checkbox" id="xfollow" checked> ⇄ bridges</label>`);
 window.autoTrace=async function(){const q=$('q').value.trim();if(!q)return;let dir=$('dir').value;if(dir==='both'){dir='forward';toast('AutoTrace follows one direction: using forward')}
  mode='auto';share();cy.elements().remove();expanded.clear();$('det').innerHTML='';skeleton();
- const p=`q=${encodeURIComponent(q)}&direction=${dir}&max_hops=${$('amax').value}&min_usd=${+$('amin').value||0}&topk=${$('topk').value}&follow_bridges=${$('xfollow')?.checked?'true':'false'}`;
+ const p=`q=${encodeURIComponent(q)}&direction=${dir}&max_hops=${$('amax').value}&min_usd=${+$('amin').value||0}&topk=${$('topk').value}&follow_bridges=${$('xfollow')?.checked?'true':'false'}&follow_change=${$('pfollow')?.checked?'true':'false'}`;
  const r=await fetch('/api/autotrace?'+p,{method:'POST'});const j=await r.json();if(!r.ok){busy(false,'Error: '+j.detail);toast(j.detail);$('side').innerHTML='';return}
  job=j.job;$('tracebtn').disabled=true;$('autobtn').disabled=true;$('cancelbtn').style.display='';busy(true,'AutoTrace queued…');poll(job)};
 const _renderAutoB=window.renderAuto;window.renderAuto=function(j){_renderAutoB(j);const bs=j.bridges||[];if(!bs.length&&!j.params?.follow_bridges)return;

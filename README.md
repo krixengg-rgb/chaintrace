@@ -7,6 +7,15 @@ Render: `render.yaml` blueprint. The label DB (~200 MB) is not in git; it is bui
 (`update_labels.py`; unclear-licence sources excluded). Set `CHAINTRACE_USER` / `CHAINTRACE_PASSWORD` in the Render dashboard.
 The free tier disk is ephemeral: the HTTP cache and in-memory trace jobs reset on restart/sleep.
 
+## BTC change-address and peel-chain leads (v15)
+**Heuristic leads, not attribution.** Everything here is drawn amber/dotted and labelled "heuristic lead".
+- **Change analysis**: tap a Bitcoin tx node (or look up a BTC tx). Each output is scored by: address type (matches the inputs' script type), round number (the other output is round), fresh vs used address, unnecessary input (only one output is consistent with every input being needed), optimal change (only output smaller than every input), change back to an input address, known-service label and the next-spend peel shape. A heuristic votes only when it singles out one output; votes are combined (log-odds weights set by ChainTrace, not published error rates) into a confidence per output, and change is proposed at ≥60%. Every reason, and every heuristic that did not vote, is shown. API: `GET /api/btc/change?tx=&min_conf=`.
+- **Peel chain**: on an address or tx tap **⤳ Peel chain**, or use `?peel=<tx|address>&hops=N`. ChainTrace follows the likely-change output to the tx that spends it, until the change is unspent, below the threshold, a labelled service, reused or merged (>3 inputs). It is called a peel chain when ≥3 hops and ≥70% are peel-shaped (1–2 inputs, 2–3 outputs, largest output ≥3× the next). The chain is grouped as one path ("Peel chain · N hops (heuristic lead)"); peeled payments are orange branches. API: `GET /api/btc/peel?q=&max_hops=&min_conf=`.
+- **AutoTrace → "⤳ change"** follows likely change outputs on BTC (payments are added as branches but not followed); the side card lists what was followed.
+- **PDF**: "Change-address and peel-chain leads (Bitcoin)" section with a method note; the victim-loss calculator flags hops via likely change as heuristic edges.
+- Limits: Bitcoin only; wallets that randomise change type/amount, use PayJoin/CoinJoin or reuse addresses defeat the heuristics; AutoTrace checks up to 4 spends per address.
+- Test: `uitest_peel.py` (real chain from tx 03d236de…, block 900,000, checked against mempool.space).
+
 ## Victim-loss calculator / fund-flow summary (v14)
 Tap **💷 Loss** in the header (or a node → **💷 Victim** / **🎯 Suspect**, or a flow → **💷 Victim payment**). Mark one or more victim addresses and/or victim payment tx hashes, optionally the suspect start address, pick the tracing method and press **Calculate**.
 - **Totals per asset**: coin amount, value on the day of each payment (Coinbase Exchange daily close for BTC/ETH/SOL/XRP and wrapped versions; stablecoins at par) and today (Coinbase spot), in GBP (ECB reference rate via the Frankfurter API, previous working day at weekends) and USD. Times in UK time and UTC.
