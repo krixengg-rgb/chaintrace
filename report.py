@@ -230,6 +230,69 @@ def kv(pdf, rows, w=(46, None)):
             r = t.row(); r.cell(k, style=FontFace(emphasis="B", color=NAVY)); r.cell(v if v not in (None, "") else "–", style=st[0] if st else None)
 
 def gbp(x): return "–" if x is None else f"£{x:,.2f}"
+def tl_rows(TL, A, loss, case_labels):
+    """the Timeline view's rows, filtered exactly like the browser (chain, asset, address/label substring, UK date range)"""
+    nodes, edges = A["nodes"], A["edges"]; L = loss if isinstance(loss, dict) else {}
+    vs, vt, sus = set(L.get("victims") or []), set(L.get("victim_txs") or []), L.get("suspect") or None
+    def kind(i): return ((case_labels.get(i) or {}).get("kind") if isinstance(case_labels.get(i), dict) else None) or (nodes.get(i) or {}).get("kind") or ((nodes.get(i) or {}).get("info") or {}).get("kind")
+    def name(i):
+        if isinstance(case_labels.get(i), dict) and case_labels[i].get("name"): return case_labels[i]["name"]
+        n = nodes.get(i) or {}; inf = n.get("info") or {}
+        return n.get("name") or inf.get("name") or ((inf.get("suggested") or {}).get("label") and (inf["suggested"]["label"] + " (suggested)")) or ""
+    q = str(TL.get("addr") or "").strip().lower(); fr, to = str(TL.get("from") or ""), str(TL.get("to") or "")
+    out = []
+    for e in edges:
+        t = e.get("time") or e.get("last") or e.get("first")
+        ch = A["chain_of"](e["source"]) or A["chain_of"](e["target"]) or ""
+        u = unit_of(e)
+        if TL.get("chain") and ch != TL["chain"]: continue
+        if TL.get("asset") and u != TL["asset"]: continue
+        if q and not any(q in str(x or "").lower() for x in (e["source"], e["target"], name(e["source"]), name(e["target"]), e.get("tx"))): continue
+        if fr or to:
+            if not t: continue
+            d = datetime.fromtimestamp(t, UK).strftime("%Y-%m-%d")
+            if (fr and d < fr) or (to and d > to): continue
+        roles = []
+        if e["source"] in vs or e.get("tx") in vt: roles.append("VICTIM PAYMENT" if e.get("tx") in vt else "VICTIM")
+        if sus and sus in (e["source"], e["target"]): roles.append("SUSPECT")
+        if kind(e["target"]) == "exchange": roles.append("TO EXCHANGE")
+        elif kind(e["source"]) == "exchange": roles.append("FROM EXCHANGE")
+        if e.get("xchain"): roles.append("BRIDGE")
+        if e.get("heuristic") or e.get("lead") or "heuristic" in (e.get("flags") or []): roles.append("LEAD")
+        out.append({"e": e, "t": t, "ch": ch, "unit": u, "roles": roles, "sn": name(e["source"]), "tn": name(e["target"])})
+    return sorted(out, key=lambda r: r["t"] or 9e12)
+async def timeline_section(pdf, TL, A, p, val, who, case_labels, errs):
+    import loss as LS
+    R = tl_rows(TL, A, p.get("loss"), case_labels)
+    days = {int(r["t"] // 86400 * 86400) for r in R if r["t"]}
+    hist, today = await LS._gbp(days, errs)
+    pdf.h1("3.0 Timeline of fund movements", landscape=True)
+    f = [f"chain = {chain_name(TL['chain'])}" if TL.get("chain") else None, f"asset = {TL['asset']}" if TL.get("asset") else None,
+         f"address/label contains “{str(TL['addr'])[:60]}”" if TL.get("addr") else None, f"from {TL['from']}" if TL.get("from") else None, f"to {TL['to']}" if TL.get("to") else None]
+    f = [x for x in f if x]
+    pdf.para(f"{len(R)} of {len(A['edges'])} flow(s) on the graph, oldest first, as filtered in the ChainTrace Timeline view ({'; '.join(f) if f else 'no filter'}). "
+             "Roles come from the investigator's marks (victim addresses / payments, suspect) and exchange attributions on the graph. "
+             "GBP = the row's USD value (basis as in section 3) × the ECB USD→GBP reference rate for that day (previous working day at weekends); "
+             "today's rate where no daily rate was available. Rows marked LEAD rest on a heuristic and are intelligence leads, not evidence.", size=7.6, color=GREY)
+    tot = 0.0; n_ = 0
+    with pdf.tbl((7, 33, 13, 54, 54, 26, 24, 26, 32), size=6.8, lh=3.2) as t:
+        r = t.row(); [r.cell(x) for x in ("#", "Time (UK / UTC)", "Chain", "From", "To", "Amount", "GBP", "USD", "Role")]
+        for k, x in enumerate(R[:600], 1):
+            e = x["e"]; v, basis = val(e); g = None
+            if v is not None:
+                d0 = int(x["t"] // 86400 * 86400) if x["t"] else None
+                rt = (hist.get(d0) or (None,))[0] if d0 is not None else None
+                rt = rt or (today[0] if today else None)
+                if rt: g = v * rt; tot += g; n_ += 1
+            fl, fa, _ = who(e["source"]); tl_, ta, _ = who(e["target"])
+            r = t.row(); r.cell(str(k)); r.cell(t_both(x["t"]) if x["t"] else "–"); r.cell(code(x["ch"]) if x["ch"] else "?")
+            r.cell(((fl + "\n") if fl else "") + (wrap_hex(fa, 40) if not is_tx(e["source"]) else "(transaction)"), style=MONOS)
+            r.cell(((tl_ + "\n") if tl_ else "") + (wrap_hex(ta, 40) if not is_tx(e["target"]) else "(transaction)"), style=MONOS)
+            r.cell(f"{num(e.get('amount'))} {x['unit']}" + (f"\n×{e['count']}" if (e.get("count") or 1) > 1 else ""))
+            r.cell(gbp(g)); r.cell((usd(v) + f" {basis}") if v is not None else "–"); r.cell(", ".join(x["roles"]) or "–")
+    if len(R) > 600: pdf.para(f"(first 600 of {len(R)} rows shown)", size=7.2, color=GREY)
+    pdf.para(f"Total of the priced rows: {gbp(tot)} ({n_} of {len(R)} rows priced). Totals add flows at every hop, so the same funds can be counted more than once; "
+             "use the victim-loss section for the loss figure.", size=7.6)
 def loss_section(pdf, L):
     """Victim loss and fund-flow summary: totals, destinations, held balances, hop-by-hop table, method (statement-friendly wording)."""
     pdf.h1("Victim loss and fund-flow summary")
@@ -567,6 +630,11 @@ async def build(p):
             r.cell(((tl + "\n") if tl else "") + (wrap_hex(ta, 30) if not is_tx(e["target"]) else ("(DEX swap step, see 3.1)" if swp else "(transaction)")), style=MONOS)
             r.cell(asset + (f"\nswap: {swp.get('leg')}" if swp else "")); r.cell(amt); r.cell((usd(v) + f" {basis}") if v is not None else "–")
             r.cell(dom(link) if link else "–", link=link, style=FontFace(color=(0, 80, 170), size_pt=6.6))
+    # ---------- 3.0 timeline (the browser's Timeline view: filters, roles, GBP) ----------
+    TL = p.get("timeline") if isinstance(p.get("timeline"), dict) else None
+    if TL and TL.get("include", True):
+        try: await timeline_section(pdf, TL, A, p, val, who, case_labels, errs)
+        except Exception as ex: errs.append(f"timeline section: {type(ex).__name__}: {str(ex)[:120]}")
     # ---------- 3.1 DEX swaps ----------
     if SW:
         pdf.h2(f"3.1 DEX swaps as readable steps ({len(SW)})")

@@ -398,6 +398,12 @@ def evm_chains():
 def bridges_supported(): return {"supported": bridges.SUPPORTED}
 @app.get("/api/prices")
 async def prices(): return await chains.ensure_prices()
+@app.get("/api/fx")
+async def fx():
+    """USD->GBP today (ECB reference rate via Frankfurter, Coinbase fallback) for GBP display in the browser"""
+    import loss
+    errs = []; _, today = await loss._gbp(set(), errs)
+    return {"usd_gbp": today[0] if today else None, "date": today[1] if today else None, "source": today[2] if today else None, "errors": errs}
 # ---- server-side watchlist email alerts (alerts.py): scheduler endpoint (token) + logged-in management ----
 @app.post("/api/alerts/run")
 async def alerts_run(request: Request):
