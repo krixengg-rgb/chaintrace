@@ -19,3 +19,8 @@ data/watch_state.json
 data/watch_events.jsonl
 chaintrace-chainabuse.sqlite
 chaintrace-sanctions.json
+
+data/alerts/
+data/watch*
+.alerts-state/
+sample_report*

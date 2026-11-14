@@ -31,6 +31,15 @@ async def guard(request: Request, call_next):
             ok = secrets.compare_digest(u, USER) & secrets.compare_digest(p, PASS)
         except Exception: ok = False
     if request.url.path == "/healthz": return await call_next(request)
+    if request.url.path == "/api/alerts/run":   # scheduler endpoint: bearer token only (ALERTS_TOKEN), never the site password
+        tok = os.environ.get("ALERTS_TOKEN") or ""; got = h[7:].strip() if h.startswith("Bearer ") else ""
+        q = RL[(_ip(request), "alerts")]; now = _t.time()
+        while q and q[0] < now - 60: q.popleft()
+        if len(q) >= 10: return JSONResponse({"detail": "rate limit"}, 429, {"Retry-After": "60"})
+        q.append(now)
+        if not got or len(tok) < 24 or not secrets.compare_digest(got.encode(), tok.encode()):
+            return JSONResponse({"detail": "invalid or missing alerts token"}, 401, {"WWW-Authenticate": "Bearer"})
+        return await call_next(request)
     if not ok:
         return Response("Authentication required", 401, {"WWW-Authenticate": 'Basic realm="ChainTrace"'})
     path = request.url.path
@@ -387,6 +396,47 @@ def evm_chains():
 def bridges_supported(): return {"supported": bridges.SUPPORTED}
 @app.get("/api/prices")
 async def prices(): return await chains.ensure_prices()
+# ---- server-side watchlist email alerts (alerts.py): scheduler endpoint (token) + logged-in management ----
+@app.post("/api/alerts/run")
+async def alerts_run(request: Request):
+    """called by the scheduler (GitHub Actions) with Authorization: Bearer ALERTS_TOKEN. Body {blob?}: encrypted state from the last run.
+    Returns counts + the new encrypted state blob only (no addresses / case data in clear: the caller's logs are public)."""
+    import alerts
+    try: p = await request.json()
+    except Exception: p = {}
+    blob = p.get("blob") if isinstance(p, dict) and isinstance(p.get("blob"), str) and len(p.get("blob")) < 2_000_000 else None
+    r = await alerts.run(blob, min(55.0, float((p or {}).get("budget") or 45)) if isinstance(p, dict) else None)
+    if r.get("busy"): raise HTTPException(409, "an alerts run is already in progress")
+    return r
+@app.get("/api/alerts/status")
+def alerts_status():
+    import alerts
+    return alerts.status()
+@app.post("/api/alerts/test")
+async def alerts_test():
+    import alerts
+    try: return await asyncio.to_thread(alerts.send_test)
+    except RuntimeError as e: raise HTTPException(400, str(e))
+    except Exception as e: raise HTTPException(502, f"email send failed: {type(e).__name__}: {str(e)[:200]}")
+@app.post("/api/alerts/mute")
+async def alerts_mute(request: Request):
+    import alerts
+    p = await request.json()
+    try: return alerts.set_mute(str(p.get("id")), bool(p.get("muted")))
+    except KeyError: raise HTTPException(404, "not in the server watchlist")
+@app.post("/api/alerts/seal")
+async def alerts_seal(request: Request):
+    """encrypt a watchlist (browser export format) with ALERTS_KEY -> value to paste into the Render env var ALERTS_WATCHLIST"""
+    import alerts
+    if int(request.headers.get("content-length") or 0) > 1_000_000: raise HTTPException(413, "too large")
+    p = await request.json()
+    items = p if isinstance(p, list) else (p or {}).get("items")
+    if not isinstance(items, list) or not items: raise HTTPException(400, "expected a watchlist with items")
+    keep = ("id", "address", "chain", "name", "ref", "rules", "muted")
+    wl = {"format": alerts.FMT, "version": 1, "items": [{k: it.get(k) for k in keep if it.get(k) is not None} for it in items if isinstance(it, dict) and it.get("address")][:500]}
+    try: v = alerts.seal(wl)
+    except ValueError as e: raise HTTPException(400, str(e))
+    return {"value": v, "items": len(wl["items"]), "chars": len(v)}
 @app.get("/healthz")
 def healthz(): return {"ok": True, "labels_db": os.path.exists(labels.LDB)}
 @app.get("/api/cache")
