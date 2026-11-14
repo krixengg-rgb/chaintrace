@@ -73,7 +73,7 @@ def classify(addr, asset):
 
 # ---------- OFAC SDN Advanced XML ----------
 def parse_ofac(path):
-    ns = ""; ftypes = {}; subtypes = {}; ptypes = {}; issued = None
+    ns = ""; ftypes = {}; subtypes = {}; ptypes = {}; issued = None; doi = {}
     parties = {}   # profile id -> {name, type, fixed, addrs:[(asset, addr)]}
     entries = {}   # profile id -> {date, programs}
     t0 = time.time()
@@ -114,6 +114,8 @@ def parse_ofac(path):
             stack.append(el); continue
         stack.pop()
         if len(stack) == 2:   # Sanctions > Section > Item: process (below) then drop it so the tree never grows (peak RAM ~ tens of MB)
+            if stack[-1].tag.split("}", 1)[-1] == "DateOfIssue" and tag in ("Year", "Month", "Day"):
+                doi[tag] = (el.text or "").strip()   # Sanctions > DateOfIssue > Year/Month/Day sit at the same depth as section items: read before they are dropped
             try: _item(tag, el)
             finally: stack[-1].remove(el)
             continue
@@ -122,8 +124,8 @@ def parse_ofac(path):
         elif tag == "PartySubType": subtypes[el.get("ID")] = ((el.text or "").strip(), el.get("PartyTypeID"))
         elif tag == "PartyType": ptypes[el.get("ID")] = (el.text or "").strip()
         elif tag == "DateOfIssue":
-            g = lambda k: int(el.findtext(ns + k) or 0)
-            issued = f"{g('Year'):04d}-{g('Month'):02d}-{g('Day'):02d}"
+            g = lambda k: int(doi.get(k) or el.findtext(ns + k) or 0)
+            issued = f"{g('Year'):04d}-{g('Month'):02d}-{g('Day'):02d}" if g("Year") else None
     out = []
     for pid, p in parties.items():
         e = entries.get(pid, {}); st, pt = subtypes.get(p["sub"], ("", None))
