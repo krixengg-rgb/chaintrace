@@ -388,10 +388,12 @@ def evm_chains():
     for c, v in chains.EVM.items():
         b = chains._bs_base(c)
         out.append({"chain": c, "name": v["name"], "short": v["short"], "id": v["id"], "unit": v["unit"], "color": v["color"], "explorer": v["ex"],
-                    "history_source": (b.split("/api/v2")[0] if b else {"binplorer": "Binplorer (keyless)", "ethplorer": "Ethplorer (keyless)", "logs": "public RPC log scan (recent window)"}[v["fallback"]]),
+                    "history_source": (b.split("/api/v2")[0] if b else {"binplorer": "Binplorer (keyless)", "ethplorer": "Ethplorer (keyless)", "logs": "full history: " + (chains.history.NAMES[chains.history.sources(c)[0]] if chains.history.sources(c) else "public RPC log scan (recent window)")}[v["fallback"]]),
                     "blockscout_refused": [k for k, t in chains.BSDEAD.items() if _t.time() - t < 900 and any(k in x for x in v["bs"])],
-                    "rpcs": len(v["rpcs"]), "blockscout_key": bool(chains.evmcfg.BS_KEY)})
-    return {"chains": out}
+                    "rpcs": len(v["rpcs"]), "blockscout_key": bool(chains.evmcfg.BS_KEY),
+                    "deep_history": [chains.history.NAMES[x] for x in chains.history.sources(c)], "unlock": chains.history.unlock_note(c)})
+    return {"chains": out, "keys": {"ETHERSCAN_API_KEY": bool(chains.history.env("ETHERSCAN_API_KEY")), "ALCHEMY_API_KEY": bool(chains.history.env("ALCHEMY_API_KEY")),
+                                    "BLOCKSCOUT_API_KEY": bool(chains.evmcfg.BS_KEY)}}
 @app.get("/api/bridges")
 def bridges_supported(): return {"supported": bridges.SUPPORTED}
 @app.get("/api/prices")

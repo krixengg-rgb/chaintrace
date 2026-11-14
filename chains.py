@@ -317,7 +317,10 @@ def counterparties(chain, focus, agg, raw=None, limit=150):
     series.sort(); return {"counterparties": out, "series": series[-800:]}
 async def eth_tx(h):
     (t, err), (tt_, _) = await asyncio.gather(_cap(get(f"{BS}/transactions/{h}"), BS_TIMEOUT + 3), _cap(get(f"{BS}/transactions/{h}/token-transfers"), BS_TIMEOUT))
-    if t is None: raise Exception(f"Blockscout transaction endpoint unavailable ({err}); try again shortly")
+    if t is None:   # Blockscout down / 5xx for this tx: decode it from the public RPC instead (same path as the other EVM chains)
+        try:
+            d = await evm_tx(h, "eth"); d["warnings"] = [f"Ethereum explorer unavailable ({err}): decoded from public RPC (tx + receipt logs; internal transfers not shown)"]; return d
+        except Exception: raise Exception(f"Blockscout transaction endpoint unavailable ({err}); try again shortly")
     tts = (tt_ or {}).get("items", [])
     tid = "tx:" + h; nodes = {tid: {"id": tid,"chain":"eth","kind":"tx","name":"tx "+h[:10],"tags":[],"risk":0}}; edges = []
     f, to = t.get("from"), t.get("to")
@@ -556,7 +559,9 @@ async def _ethplorer_history(a, want_eth=True, want_tok=True, base=None, unit="E
         hist.append({"tx": t.get("transactionHash"), "time": t.get("timestamp"), "delta": v if (too or "").lower() == al else -v, "unit": sym, "method": f"token transfer ({nm.lower()})", "rate": rate})
     return edges, hist, (isinstance(txs, list) or th is not None)
 async def evm_address(a, cursor=None, f=None, to=None, pages=1, chain="eth"):
-    a = evmcfg.bare(a); cfg = EVM[chain]; U = cfg["unit"]; BSU = _bs_base(chain); ka = a if chain == "eth" else f"{chain}:{a}"
+    a = evmcfg.bare(a); cfg = EVM[chain]; U = cfg["unit"]; BSU = _bs_base(chain); ka = a if chain == "eth" else f"{chain}:{a}"; a0 = a
+    deep = cursor[3:] if isinstance(cursor, str) and cursor.startswith("dh:") else None   # page 2+ of a deep-history source (history.py)
+    if deep: BSU = None
     out = {"chain": chain, "unit": U, "address": a, "chain_name": cfg["name"]}
     t0 = time.time(); DEADLINE = float(os.environ.get("CHAINTRACE_ETH_DEADLINE", "18")); miss = []; pending = []
     fast = FAST.get() and not cursor and not (f or to)   # interactive first page: soft deadline + background completion
@@ -598,7 +603,7 @@ async def evm_address(a, cursor=None, f=None, to=None, pages=1, chain="eth"):
             out["tx_count"] = int(nonce, 16); out["tx_count_note"] = "outgoing txs (nonce) from RPC"
     hist_done = asyncio.Event()
     hdr = asyncio.create_task(_hdr()) if not cursor else None   # runs concurrently with the history streams
-    cur = dec(cursor) or {"t": None, "k": None, "i": None}
+    cur = (None if deep else dec(cursor)) or {"t": None, "k": None, "i": None}
     al = a.lower(); ntags = {}; edges = []; hist = []
     def reg(x):
         if x and x.get("hash"): ntags.setdefault(x["hash"], _tags(x))
@@ -668,7 +673,7 @@ async def evm_address(a, cursor=None, f=None, to=None, pages=1, chain="eth"):
         if f and times and max(times) < f: done = True
         if done or hist or failed or pending or time.time() - t0 > DEADLINE: break
     hist_done.set()
-    if ({"transactions", "token transfers"} & (failed | set(pending))) and not cursor and not (f or to):
+    if ({"transactions", "token transfers"} & (failed | set(pending))) and (not cursor or deep) and (not (f or to) or not BSU):
         we, wt = "transactions" in (failed | set(pending)), "token transfers" in (failed | set(pending))
         if spec:
             try: e2_, h2_, ok, fsrc = await asyncio.wait_for(spec, 12)
@@ -676,7 +681,7 @@ async def evm_address(a, cursor=None, f=None, to=None, pages=1, chain="eth"):
             keep = lambda h_: (we and "token" not in (h_.get("method") or "")) or (wt and "token" in (h_.get("method") or ""))
             e2_ = [e for e in e2_ if (we and e["unit"] == U) or (wt and e["unit"] != U)]; h2_ = [h_ for h_ in h2_ if keep(h_)]
             spec = None
-        else: e2_, h2_, ok, fsrc = await _fallback_history(chain, a, we, wt)
+        else: e2_, h2_, ok, fsrc = await _fallback_history(chain, a, we, wt, deep, f, to)
         what = " + ".join(x for x, w in ((f"{U} transfers", we), ("token transfers", wt)) if w)
         cs = {x.lower(): x for e in edges for x in (e["source"], e["target"])}   # reuse checksum forms seen from Blockscout
         for e in e2_: e["source"] = cs.get(e["source"].lower(), e["source"]); e["target"] = cs.get(e["target"].lower(), e["target"])
@@ -695,6 +700,10 @@ async def evm_address(a, cursor=None, f=None, to=None, pages=1, chain="eth"):
         failed -= {"transactions", "token transfers", "internal transactions"}; pending = []
         miss = [m for m in miss if m not in ("internal transactions", "address info", "counters")]
         out["explorer"] = None; out["history_note"] = _NOBS_NOTE.get(cfg["fallback"], "")
+        dl = history.LAST.get((chain, a0.lower()))
+        if dl and time.time() - dl["t"] < 120:   # a deep-history source served this page: its own cursor + note
+            out["history_note"] = f"Full history from {dl['src']}." + (" " + dl["note"] if dl.get("note") else "")
+            out["history_deep"] = {"source": dl["src"], "next": bool(dl.get("next"))}
         cur = {"t": "done", "k": "done", "i": "done"}
     else: out["explorer"] = BSU.split("/api/v2")[0]
     # canonical address: from Blockscout info, else the checksummed form seen in edges, else as typed
@@ -718,6 +727,9 @@ async def evm_address(a, cursor=None, f=None, to=None, pages=1, chain="eth"):
     except Exception: pass
     out["nodes"], out["edges"], out["txs"] = _finish_page(chain, a, edges, hist, ntags); out["cp"] = CP_LAST[0]
     out["next"] = None if all(v == "done" for v in cur.values()) or (f and done) else enc(cur)
+    if out.get("history_deep"):
+        dl = history.LAST.get((chain, a0.lower())) or {}
+        out["next"] = ("dh:" + dl["next"]) if dl.get("next") else None
     mark("built"); out["timing"] = tm
     if out.get("history_note"): out["warnings"] = [out["history_note"]]
     if pending:   # still loading from Blockscout in the background; the client re-requests shortly and gets the cached result
@@ -732,8 +744,8 @@ async def evm_address(a, cursor=None, f=None, to=None, pages=1, chain="eth"):
 
 async def eth_address(a, cursor=None, f=None, to=None, pages=1): return await evm_address(a, cursor, f, to, pages, "eth")
 _NOBS_NOTE = {"binplorer": "History from Binplorer (BSC twin of Ethplorer, public free key): last ~50 BNB and ~50 token transfers; internal transfers not included",
-              "logs": "Explorer API not reachable without a key: history is a recent-window scan of major-token transfers from public RPC logs"
-                      " (native-coin transfers not visible except on Polygon). Set BLOCKSCOUT_API_KEY (free) for full history."}
+              "logs": "Explorer API and the keyless full-history source (3xpl) not reachable: history is a recent-window scan of major-token transfers from public RPC logs"
+                      " (native-coin transfers not visible except on Polygon). Set ETHERSCAN_API_KEY (Arbitrum/Polygon) or ALCHEMY_API_KEY (any chain), both free, for full history."}
 async def sol_address(a, cursor=None, f=None, to=None, pages=1, limit=15):
     out = {"chain": "sol", "address": a, "unit": "SOL"}; t0 = time.time(); await ensure_prices()
     if not cursor:
@@ -1042,8 +1054,20 @@ BINPLORER = "https://api.binplorer.com"
 T_TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 def _pad(a): return "0x" + "0" * 24 + a.lower()[2:]
 def _a32(w): return "0x" + w[-40:].lower()
-async def _fallback_history(chain, a, want_native=True, want_tok=True):
-    """-> (edges, hist, ok, source description)"""
+async def _fallback_history(chain, a, want_native=True, want_tok=True, cursor=None, f=None, to=None):
+    """-> (edges, hist, ok, source description). Deep paginated sources first (history.py: keyed Etherscan/Alchemy, keyless 3xpl),
+    except Ethereum/BSC without a key (Ethplorer/Binplorer answer faster there); recent-window RPC log scan last."""
+    srcs = history.sources(chain)
+    if srcs and (cursor or chain not in ("eth", "bsc") or srcs[0] != "3xpl"):
+        r = await history.page(chain, a, cursor, f, to); n = 0
+        while r["ok"] and (f or to) and not r["hist"] and r["next"] and n < 3:   # date window older than this page: keep paging
+            r = await history.page(chain, a, r["next"], f, to); n += 1
+        if r["ok"]:
+            history.LAST[(chain, a.lower())] = {"t": time.time(), "src": r["src"], "note": r["note"], "next": r["next"]}
+            return r["edges"], r["hist"], True, r["src"]
+        history.LAST.pop((chain, a.lower()), None)
+        if cursor: return [], [], False, f"deep history unavailable ({r['note'][:120]})"
+    else: history.LAST.pop((chain, a.lower()), None)
     if chain == "eth":
         e_, h_, ok = await _ethplorer_history(a, want_native, want_tok); return e_, h_, ok, "Ethplorer (fallback, last ~50)"
     if chain == "bsc":
@@ -1204,3 +1228,5 @@ def _mk_tx(c):
 # wire paginated fetchers (overrides any earlier ADDR stubs)
 ADDR = {"btc": btc_address, "eth": eth_address, "sol": sol_address, "tron": tron_address, "xrp": xrp_address, **{c: _mk_addr(c) for c in EVM_NEW}}
 TX = {"btc": btc_tx, "eth": eth_tx, "sol": sol_tx, "tron": tron_tx, "xrp": xrp_tx, **{c: _mk_tx(c) for c in EVM_NEW}}
+
+import history   # deep EVM history sources (imports chains back; resolved at call time)

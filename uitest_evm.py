@@ -67,9 +67,10 @@ def explorers():
                 any(x["token"]["symbol"] == "STG" and near(int(x["total"]["value"]) / 1e18, 150.08417411331772) for x in j["items"]) and any(x["token"]["symbol"] == "USDC" and int(x["total"]["value"]) == 20169723 for x in j["items"]))
     else: skipped("explorer: OP Blockscout", "unreachable")
     j = jget(f"https://eth.blockscout.com/api/v2/transactions/{BRIDGES[3][4]}/token-transfers")
-    if j: check("explorer: L1 finalize of OP withdrawal paid 30556.192554 USDT", any(int(x["total"]["value"]) == 30556192554 and x["to"]["hash"].lower() == BRIDGES[3][5] for x in j["items"]))
+    if isinstance(j, dict) and isinstance(j.get("items"), list): check("explorer: L1 finalize of OP withdrawal paid 30556.192554 USDT", any(int(x["total"]["value"]) == 30556192554 and x["to"]["hash"].lower() == BRIDGES[3][5] for x in j["items"]))
     j = jget(f"https://eth.blockscout.com/api/v2/transactions/{BRIDGES[4][4]}/internal-transactions")
-    if j: check("explorer: L1 Outbox execution paid 0.009 ETH", any(int(x["value"]) == 9 * 10 ** 15 and x["to"]["hash"].lower() == BRIDGES[4][5] for x in j["items"]))
+    if isinstance(j, dict) and isinstance(j.get("items"), list): check("explorer: L1 Outbox execution paid 0.009 ETH", any(int(x["value"]) == 9 * 10 ** 15 and (x.get("to") or {}).get("hash", "").lower() == BRIDGES[4][5] for x in j["items"]))
+    else: skipped("explorer: eth Blockscout internal txs", str(j)[:80])
 
 def api(cl):
     j = cl.get(U + "/api/evm/chains").json()
