@@ -1,0 +1,38 @@
+# ChainTrace watchlist email alerts: wakes the Render service and runs one alert round every 20 minutes.
+# Needs the repository secret ALERTS_TOKEN (same value as the Render env var). Optional repository variable CHAINTRACE_URL.
+# State (cursors/mutes) is an opaque blob encrypted on the server with ALERTS_KEY; it is kept in the Actions cache.
+name: watch-alerts
+on:
+  schedule:
+    - cron: "7,27,47 * * * *"
+  workflow_dispatch: {}
+concurrency:
+  group: watch-alerts
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Restore encrypted alert state
+        uses: actions/cache/restore@v4
+        with:
+          path: .alerts-state
+          key: alerts-state-${{ github.run_id }}
+          restore-keys: alerts-state-
+      - name: Run alert round
+        env:
+          ALERTS_TOKEN: ${{ secrets.ALERTS_TOKEN }}
+          CHAINTRACE_URL: ${{ vars.CHAINTRACE_URL }}
+        run: python3 .github/scripts/alerts_call.py
+      - name: Save encrypted alert state
+        if: always() && hashFiles('.alerts-state/blob') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .alerts-state
+          key: alerts-state-${{ github.run_id }}
