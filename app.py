@@ -398,6 +398,21 @@ def evm_chains():
 def bridges_supported(): return {"supported": bridges.SUPPORTED}
 @app.get("/api/prices")
 async def prices(): return await chains.ensure_prices()
+@app.post("/api/import/parse")
+async def import_parse(request: Request):
+    """bulk import: CSV or pasted list -> validated, de-duplicated rows with detected chain and per-row errors (nothing is stored)"""
+    import importer
+    if int(request.headers.get("content-length") or 0) > importer.MAX_BYTES * 2 + 4096: raise HTTPException(413, f"input too large (max {importer.MAX_BYTES // 1024} KB)")
+    try: p = await request.json()
+    except Exception: raise HTTPException(400, "body must be JSON {text}")
+    t = (p or {}).get("text") if isinstance(p, dict) else None
+    if not isinstance(t, str) or not t.strip(): raise HTTPException(400, "nothing to import")
+    try: return importer.parse(t)
+    except ValueError as e: raise HTTPException(413, str(e))
+@app.get("/api/import/template")
+def import_template():
+    import importer
+    return Response(importer.TEMPLATE, media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="chaintrace-import-template.csv"'})
 @app.get("/api/fx")
 async def fx():
     """USD->GBP today (ECB reference rate via Frankfurter, Coinbase fallback) for GBP display in the browser"""

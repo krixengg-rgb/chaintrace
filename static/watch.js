@@ -149,6 +149,10 @@ function notify(evs){if(!W.settings.notify||!window.Notification||Notification.p
  try{for(const e of show){const n=new Notification(`ChainTrace · ${e.severity.toUpperCase()} · ${e.name||short(e.address)}`,{body:(e.dir==='out'?'OUT ':'IN ')+(e.usd!=null?usd(e.usd):'')+' · '+(e.rules||[]).join('; '),tag:e.id});n.onclick=()=>{window.focus();ctWatch(true);ctWTab('alerts')}}
   if(evs.length>show.length)new Notification('ChainTrace watchlist',{body:`${evs.length} new alert(s)`,tag:'ct-sum'})}catch(e){}}
 // ---------- export / import (same format as watch_check.py) ----------
+window.ctWatchAddMany=list=>{let n=0,skip=0;for(const x of list){if(W.items.length>=200){skip+=list.length-n-skip;break}
+  if(W.items.some(y=>y.address.toLowerCase()===x.address.toLowerCase())){skip++;continue}
+  W.items.unshift({id:uid(),address:x.address,chain:x.chain,name:x.name||'',ref:x.ref||'',note:x.note||'',rules:{...DEF,cats:[...DEF.cats]},added:Date.now(),case_id:(typeof curCase!=='undefined'&&curCase&&curCase.id)||null,cursor:null,last:null});n++}
+ save();badge();if($('wdrawer').classList.contains('open'))render();return{added:n,skipped:skip}};   // bulk import (static/import.js); first check baselines
 window.ctWItems=()=>W.items.map(({last,...x})=>x);   // for the server email-alerts panel (static/alerts.js)
 window.ctWExport=()=>{const o={format:'chaintrace-watchlist',version:1,exported:Date.now(),source:'browser',items:W.items.map(({last,...x})=>x)};
  dl('chaintrace-watchlist-'+new Date().toISOString().slice(0,10)+'.json',new Blob([JSON.stringify(o,null,1)],{type:'application/json'}));toast('Exported '+o.items.length+' address(es)')};
