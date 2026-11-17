@@ -409,6 +409,26 @@ async def import_parse(request: Request):
     if not isinstance(t, str) or not t.strip(): raise HTTPException(400, "nothing to import")
     try: return importer.parse(t)
     except ValueError as e: raise HTTPException(413, str(e))
+@app.post("/api/audit/anchor")
+async def audit_anchor(request: Request):
+    """server-signed receipt (HMAC) for a case audit-log head hash; nothing is stored on the server"""
+    import auditlog
+    try: p = await request.json()
+    except Exception: raise HTTPException(400, "body must be JSON")
+    try: return auditlog.anchor((p or {}).get("case_id"), (p or {}).get("seq"), (p or {}).get("head"))
+    except ValueError as e: raise HTTPException(400, str(e))
+    except RuntimeError as e: raise HTTPException(503, str(e))
+@app.post("/api/audit/verify")
+async def audit_verify(request: Request):
+    """check a receipt (and optionally a whole audit log: {receipt?, entries?})"""
+    import auditlog
+    try: p = await request.json()
+    except Exception: raise HTTPException(400, "body must be JSON")
+    if isinstance(p, dict) and "entries" in p:
+        r = auditlog.verify(p.get("entries")); rc = p.get("receipt")
+        if rc: r["receipt_valid"] = auditlog.check_receipt(rc); r["receipt_matches"] = bool(r["receipt_valid"] and 0 < rc.get("seq", 0) <= r["n"] and (p.get("entries")[rc["seq"] - 1] or {}).get("h") == rc.get("head"))
+        return r
+    return {"valid": auditlog.check_receipt(p)}
 @app.get("/api/import/template")
 def import_template():
     import importer

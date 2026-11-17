@@ -736,25 +736,41 @@ async def build(p):
     if heur or sugg: pdf.box(f"{len(sugg)} inferred deposit label(s) and {len(heur)} heuristic bridge match(es) are marked “{LEAD}”.", title="Intelligence leads")
     # ---------- 6 notes ----------
     cn = case.get("notes") or {}
-    if (cn.get("case") or cn.get("nodes") or cn.get("edges")):
+    jr = [e for e in (case.get("journal") or []) if isinstance(e, dict) and e.get("text")]
+    if (cn.get("case") or cn.get("nodes") or cn.get("edges") or jr):
         pdf.h1("6. Case notes")
         if cn.get("case"): pdf.h2("Case summary note"); pdf.para(str(cn["case"])[:6000], size=8.6)
-        if cn.get("nodes"):
+        if jr:
+            import auditlog
+            pdf.h2(f"Notes journal ({sum(not e.get('deleted') for e in jr)} current, {sum(bool(e.get('deleted')) for e in jr)} deleted)")
+            pdf.para("Timestamped, attributed notes in the order written. Edited notes show the current text; earlier versions are listed underneath. "
+                     "Deleted notes are kept and marked. Every add / edit / delete is also recorded in the hash-chained audit log (Appendix A.6).", size=7.4, color=GREY)
+            with pdf.tbl((40, 26, 44, pdf.epw - 110), size=7.0) as t:
+                r = t.row(); [r.cell(x) for x in ("Written (UK / UTC)", "By", "On", "Note")]
+                for e in sorted(jr, key=lambda x: x.get("t") or 0)[:400]:
+                    on = "Case" if e.get("kind") == "case" else wrap_hex(cid(str(e.get("target")))[1] if e.get("kind") == "nodes" else str(e.get("target")), 30)
+                    txt = str(e.get("text"))[:1800]
+                    if e.get("tags"): txt += "\n[tags: " + ", ".join(map(str, e["tags"]))[:200] + "]"
+                    if e.get("deleted"): txt = "[DELETED " + auditlog.t_both((e["deleted"] or {}).get("t")) + " by " + str((e["deleted"] or {}).get("author")) + "] " + txt
+                    for rv in (e.get("rev") or [])[-5:]:
+                        if isinstance(rv, dict): txt += "\n  earlier version (" + auditlog.t_both(rv.get("t")) + ", " + str(rv.get("author")) + "): " + str(rv.get("text"))[:600]
+                    r = t.row(); r.cell(auditlog.t_both(e.get("t"))); r.cell(str(e.get("author") or "")[:60]); r.cell(on, style=None if e.get("kind") == "case" else MONOS); r.cell(txt)
+        elif cn.get("nodes"):
             pdf.h2("Address notes")
             with pdf.tbl((70, pdf.epw - 70), size=7.4) as t:
                 r = t.row(); r.cell("Address"); r.cell("Note")
                 for i, v in list(cn["nodes"].items())[:200]: r = t.row(); r.cell(wrap_hex(cid(i)[1], 40), style=MONOS); r.cell(str(v)[:1500])
-        if cn.get("edges"):
+        if cn.get("edges") and not jr:
             pdf.h2("Flow notes")
             with pdf.tbl((70, pdf.epw - 70), size=7.4) as t:
                 r = t.row(); r.cell("Flow"); r.cell("Note")
                 for i, v in list(cn["edges"].items())[:200]: r = t.row(); r.cell(wrap_hex(i, 40), style=MONOS); r.cell(str(v)[:1500])
     # ---------- 7 methodology ----------
-    pdf.h1(("7" if (cn.get("case") or cn.get("nodes") or cn.get("edges")) else "6") + ". Methodology and limitations")
+    pdf.h1(("7" if (cn.get("case") or cn.get("nodes") or cn.get("edges") or jr) else "6") + ". Methodology and limitations")
     pdf.h2("Data sources")
     pdf.bullets([
         "All transaction data comes from public blockchain records, retrieved through third-party APIs. ChainTrace does not run its own nodes, so results depend on those services being available and accurate.",
-        "Bitcoin: mempool.space REST API (address and transaction history, inputs and outputs, block times).",
+        "Bitcoin: mempool.space REST API (address and transaction history, inputs and outputs, block times), with Blockstream (blockstream.info, same Esplora API) as a fallback.",
         "Ethereum: Blockscout public API (eth.blockscout.com) for transfers, token transfers and public tags. Public JSON-RPC endpoints (e.g. publicnode, drpc, Cloudflare) for balances. Ethplorer as a fallback.",
         "TRON: TronGrid (api.trongrid.io) for account info, native TRX TransferContract history and TRC-20 transfers (notably USDT-TRC20), with TronStack as a fallback. Addresses validated as base58check (T…) or hex 41….",
         "XRP Ledger: public rippled JSON-RPC (xrplcluster.com, s1/s2.ripple.com) account_info and account_tx. Payments include destination tags (used by VASPs) and issued currencies with issuer.",
@@ -833,6 +849,25 @@ async def build(p):
                 r = t.row(); r.cell(k + (" (used)" if k in used else ""), style=BOLD if k in used else None); r.cell(d); r.cell(u, style=MONOS, link=u if u.startswith("http") else None); r.cell(l)
     except Exception as ex2: errs.append(f"label dataset list: {type(ex2).__name__}")
     if errs: pdf.h2("A.5 Report generation notes"); pdf.bullets(errs, size=7.6)
+    au = [e for e in (case.get("audit") or []) if isinstance(e, dict)]
+    if au:
+        import auditlog
+        v = auditlog.verify(au); anc = [a for a in (case.get("anchors") or []) if isinstance(a, dict)]
+        pdf.h2(f"A.6 Case audit log ({len(au)} entries)")
+        rc = []
+        for a in anc[-5:]:
+            ok_sig = auditlog.check_receipt(a); ok_m = ok_sig and 0 < int(a.get("seq") or 0) <= len(au) and au[int(a["seq"]) - 1].get("h") == a.get("head")
+            rc.append(f"entry {a.get('seq')} anchored {t_uk(a.get('t') or 0)}: " + ("receipt valid and matches this log" if ok_m else "receipt signature valid but does NOT match this log" if ok_sig else "receipt could not be verified by this server"))
+        kv(pdf, [("Hash chain", ("Intact: all " + str(v["n"]) + " entries verified") if v["ok"] else f"BROKEN at entry {v.get('at')} ({v.get('why')})"),
+                 ("Head SHA-256", v.get("head") or "–", MONO), ("Anchor receipts", "; ".join(rc) if rc else "none (the log was not anchored with the server)")])
+        pdf.para("Append-only record kept with the case in the investigator's browser. Each entry's SHA-256 covers the previous entry's hash, so any edit or deletion "
+                 "breaks the chain from that point. Anchor receipts are HMAC signatures from the ChainTrace server over a head hash and time, which also makes a rewrite of the "
+                 "whole chain detectable. Formula: sha256(JSON [seq, time_ms, actor, action, target, detail, prev]).", size=7.0, color=GREY)
+        with pdf.tbl((9, 46, 24, 30, 46, pdf.epw - 9 - 46 - 24 - 30 - 46 - 30, 30), size=6.4, lh=2.9) as t:
+            r = t.row(); [r.cell(x) for x in ("#", "Time (UK / UTC)", "By", "Action", "Target", "Detail", "SHA-256")]
+            for e in au[-600:]:
+                r = t.row(); r.cell(str(e.get("seq"))); r.cell(auditlog.t_both(e.get("t"))); r.cell(str(e.get("actor") or "")[:40]); r.cell(str(e.get("action") or ""))
+                r.cell(wrap_hex(str(e.get("target") or ""), 34), style=MONOS); r.cell(auditlog.detail_txt(e.get("detail"))[:400]); r.cell(str(e.get("h") or "")[:16] + "…", style=MONOS)
     # ---------- appendix B ----------
     pdf.h1("Appendix B. Integrity and reproducibility")
     kv(pdf, [("Case data SHA-256", data_sha, MONO), ("Case data size", f"{len(data_bytes):,} bytes (canonical JSON, UTF-8)"),

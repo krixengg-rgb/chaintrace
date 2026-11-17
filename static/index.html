@@ -390,10 +390,10 @@ async function importCases(files){let n=0;for(const f of files){try{const o=JSON
 // ---------- notes & custom labels ----------
 function effLabel(id){return(curCase&&curCase.labels[id])||GL()[id]||null}
 function applyCaseDecor(){const notes=curCase?curCase.notes:{nodes:{},edges:{}};
- cy.nodes().forEach(n=>{const id=n.id();n.data('note',notes.nodes[id]?1:undefined);const L=effLabel(id);
+ cy.nodes().forEach(n=>{const id=n.id();if(notes.nodes[id])n.data('note',1);else n.removeData('note');const L=effLabel(id);
   if(L){if(!n.data('orig'))n.data('orig',{kind:n.data('kind')||null,lbl:n.data('lbl')});n.data('kind',L.kind||undefined);n.data('lbl','★ '+L.name);n.data('custom',1)}
   else if(n.data('orig')){const o=n.data('orig');n.data('kind',o.kind||undefined);n.data('lbl',o.lbl);n.removeData('orig custom')}});
- cy.edges().forEach(e=>e.data('note',notes.edges[e.id()]?1:undefined))}
+ cy.edges().forEach(e=>{if(notes.edges[e.id()])e.data('note',1);else e.removeData('note')})}
 async function setNote(kind,id,txt){await ensureCase();if(txt.trim())curCase.notes[kind][id]=txt;else delete curCase.notes[kind][id];applyCaseDecor();autosave();caseCard()}
 async function saveLabel(id){const name=$('clName').value.trim();if(!name)return toast('Enter a label name');const L={name,kind:$('clKind').value||null,at:Date.now()};
  if($('clGlobal').checked){const g=GL();g[id]=L;localStorage.ct_labels=JSON.stringify(g)}await ensureCase();curCase.labels[id]=L;applyCaseDecor();autosave();caseCard();toast('Label applied')}
@@ -433,4 +433,4 @@ function exportEndpoints(){const j=lastTrace;if(!j||!j.endpoints)return;const ro
   (async()=>{await go();for(const a of list.slice(1)){try{const d=await api(a);add(d,null)}catch(e){}}
    if(p.get('mode')==='auto'||p.get('autotrace')==='1')autoTrace()})();return}}
  if(q){$('q').value=q;setBadge();p.get('mode')==='trace'?traceN():p.get('mode')==='auto'?autoTrace():go()}})();
-</script><script src="/static/v6.js"></script><script src="/static/bridge.js"></script><script src="/static/report.js"></script><script src="/static/watch.js"></script><script src="/static/screen.js"></script><script src="/static/swaps.js"></script><script src="/static/loss.js"></script><script src="/static/peel.js"></script><script src="/static/evm.js"></script><script src="/static/alerts.js"></script><script src="/static/timeline.js"></script><script src="/static/import.js"></script></body></html>
+</script><script src="/static/v6.js"></script><script src="/static/bridge.js"></script><script src="/static/report.js"></script><script src="/static/watch.js"></script><script src="/static/screen.js"></script><script src="/static/swaps.js"></script><script src="/static/loss.js"></script><script src="/static/peel.js"></script><script src="/static/evm.js"></script><script src="/static/alerts.js"></script><script src="/static/timeline.js"></script><script src="/static/import.js"></script><script src="/static/casenotes.js"></script></body></html>

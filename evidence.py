@@ -355,6 +355,12 @@ async def build_pack(p):
         files.append((base + ".txt", blocks_to_txt(B).encode("utf-8")))
     files.append(("vasp_schedule.csv", schedule_csv(V)))
     if info.get("loss") and info["loss"].get("csv"): files.append(("victim_loss_summary.csv", info["loss"]["csv"].encode("utf-8")))
+    import auditlog
+    if any(isinstance(e, dict) for e in case.get("journal") or []): files.append(("case_notes.csv", auditlog.notes_csv(case.get("journal"))))
+    if any(isinstance(e, dict) for e in case.get("audit") or []):
+        files.append(("case_audit_log.csv", auditlog.audit_csv(case.get("audit"))))
+        files.append(("case_audit_log.json", json.dumps({"format": "chaintrace-audit", "version": 1, "case_id": case.get("id"), "verification": auditlog.verify(case.get("audit")),
+                                                          "entries": case.get("audit"), "anchors": case.get("anchors") or []}, ensure_ascii=False, indent=1).encode("utf-8")))
     names = [n for n, _ in files] + ["HOW_TO_USE.txt", "SHA256SUMS.txt"]
     files.append(("HOW_TO_USE.txt", how_to(le, V, info, gen, names)))
     sums = "".join(f"{hashlib.sha256(b).hexdigest()}  {n}\n" for n, b in files).encode()
