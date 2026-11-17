@@ -100,7 +100,24 @@ FRESH = contextvars.ContextVar("fresh", default=None)   # watchlist checks: cap 
 RAW = contextvars.ContextVar("raw", default=None)       # watchlist checks: receive the un-aggregated edges of a page
 def _ttl(ttl):
     f = FRESH.get(); return min(ttl, f) if f and ttl < LONG else ttl
+MP_MIRROR = "https://blockstream.info/api"   # Esplora API, same paths as mempool.space; used when mempool.space is unreachable
+MPDEAD = {"t": 0}
 async def get(url, ttl=TTL, **kw):
+    if url.startswith("https://mempool.space/api/"):
+        alt = MP_MIRROR + url[len("https://mempool.space/api"):]
+        if time.time() - MPDEAD["t"] < 600: return await _get(alt, ttl, **kw)
+        try: return await _get(url, ttl, **kw)
+        except (httpx.TransportError, httpx.TimeoutException) as e: why = type(e).__name__
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code < 500 and e.response.status_code != 429: raise
+            why = f"HTTP {e.response.status_code}"
+        except Exception as e:
+            if "rate limited" not in str(e): raise
+            why = "rate limited"
+        MPDEAD["t"] = time.time(); _warn(f"mempool.space unavailable ({why}): using blockstream.info")
+        return await _get(alt, ttl, **kw)
+    return await _get(url, ttl, **kw)
+async def _get(url, ttl=TTL, **kw):
     ttl = _ttl(ttl); k = ("GET", url, str(kw))
     if k in _cache and time.time() - _cache[k][0] < ttl: STATS["hit"] += 1; return _cache[k][1]
     STATS["miss"] += 1
