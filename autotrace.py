@@ -4,10 +4,10 @@ import asyncio, time, uuid, chains, trace, deposits, bridges
 from labels import EXPO, RISK
 ENDPOINT = set(RISK) - {"other", "miner"}
 ENDPOINT_AT = 0.85
-SEM = {"sol": 1, "btc": 3, "eth": 3, "tron": 2, "xrp": 2, "bsc": 2, "arb": 2, "base": 2, "polygon": 2, "op": 2}
+SEM = {"sol": 1, "btc": 3, "ltc": 2, "doge": 2, "bch": 2, "eth": 3, "tron": 2, "xrp": 2, "bsc": 2, "arb": 2, "base": 2, "polygon": 2, "op": 2}
 def _sh(x): return x if x.startswith("tx:") else x[:8] + "…"
 MAX_BRIDGE_HOPS = 8
-NATIVE_UNIT = {"btc": "BTC", "eth": "ETH", "sol": "SOL", "tron": "TRX", "xrp": "XRP", **{c: v["unit"] for c, v in chains.EVM.items()}}
+NATIVE_UNIT = {"btc": "BTC", "eth": "ETH", "sol": "SOL", "tron": "TRX", "xrp": "XRP", "ltc": "LTC", "doge": "DOGE", "bch": "BCH", **{c: v["unit"] for c, v in chains.EVM.items()}}
 async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges=False, follow_change=False):
     J = trace.JOBS[job]; c, kind = chains.detect(q); J.update(chain=c, status="running"); t0 = time.time()
     nodes, edges, parent, depth_of = {}, {}, {}, {}
@@ -92,7 +92,7 @@ async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, s
                     except Exception as ex: J["errors"].append(f"suggest {a[:10]}: {ex}")
                     if nodes[a].get("kind") in ENDPOINT: J["nodes"] = list(nodes.values()); continue   # high-confidence deposit = endpoint
                 elif a != root and nodes.get(a, {}).get("kind") in ENDPOINT: continue
-                if follow_change and direction == "forward" and ch(a) == "btc":
+                if follow_change and direction == "forward" and ch(a) == "btc":   # change detection (peel.py) uses the Bitcoin Esplora API
                     try: fc = await _follow_change(a, d, J)
                     except Exception as ex: fc = None; J["errors"].append(f"change {a[:10]}: {type(ex).__name__}")
                     if fc:

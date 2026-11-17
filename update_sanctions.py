@@ -22,7 +22,7 @@ UK_PAGE = "https://www.gov.uk/government/publications/the-uk-sanctions-list"
 OUT = os.path.join(H, "data", "sanctions.json")
 UA = {"User-Agent": "ChainTrace sanctions screening (+https://github.com/krixengg-rgb)"}
 EVM_ASSETS = {"ETH", "USDT", "USDC", "ARB", "BSC", "BNB", "ETC"}
-SUPPORTED = ("btc", "eth", "sol", "tron", "xrp")
+SUPPORTED = ("btc", "eth", "sol", "tron", "xrp", "ltc", "doge", "bch")
 
 def fetch(url, timeout=240):
     fd, p = tempfile.mkstemp(prefix="ct-sanc-"); os.close(fd)

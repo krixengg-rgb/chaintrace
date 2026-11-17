@@ -12,11 +12,15 @@ STALE_SECS = 86400
 S = {"idx": {}, "raw": {}, "lists": {}, "counts": {}, "generated": 0, "sha256": None, "path": None, "refreshing": False, "last_refresh": None, "refresh_error": None}
 REPORT_CATS = {"scam", "hack", "ransomware", "darknet", "blocklisted", "terrorism"}
 NOT_REPORTS = {"ofac", "builtin", "allowlist"}   # official list / own seed data are not "community reports"
-SUPPORTED = ("btc", "eth", "sol", "tron", "xrp", "bsc", "arb", "base", "polygon", "op")
+SUPPORTED = ("btc", "eth", "sol", "tron", "xrp", "bsc", "arb", "base", "polygon", "op", "ltc", "doge", "bch")
 
 EVM_ALIAS = ("bsc", "arb", "base", "polygon", "op")   # EVM chains screened against the 0x (ETH/EVM) listings
 def key(chain, a):
     a = (a or "").strip()
+    if chain in ("ltc", "doge", "bch"):
+        import utxo
+        try: return utxo.bare(chain, a)
+        except Exception: return a
     if chain in EVM_ALIAS or chain == "eth": a = a.split(":", 1)[1] if ":" in a and a.split(":", 1)[0] in EVM_ALIAS else a
     if chain == "eth" or a.startswith("0x"): return a.lower()
     if a.lower().startswith("bc1"): return a.lower()
@@ -26,7 +30,8 @@ def _load_file(p):
     with open(p) as f: d = json.load(f)
     idx, raw = {}, {}
     for e in d.get("entries") or []:
-        idx.setdefault((e["c"], e["a"]), []).append(e)
+        k = key(e["c"], e["a"]) if e["c"] in ("ltc", "doge", "bch") else e["a"]   # BCH listings use legacy 1…/3… form: index them as CashAddr
+        idx.setdefault((e["c"], k), []).append(e)
         raw.setdefault(e["a"].lower(), []).append(e)
     return d, idx, raw
 

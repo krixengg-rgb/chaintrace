@@ -1,7 +1,7 @@
 // ChainTrace v16: EVM chains beyond Ethereum (BNB Smart Chain, Arbitrum One, Base, Polygon PoS, OP Mainnet).
 // Chain selector + "All EVM" activity scan, chain-coloured nodes/edges, tx-hash chain detection notes. Loaded last; wraps globals.
 (()=>{
-const NAME={eth:'Ethereum',bsc:'BNB Smart Chain',arb:'Arbitrum One',base:'Base',polygon:'Polygon PoS',op:'OP Mainnet'};
+const NAME={eth:'Ethereum',bsc:'BNB Smart Chain',arb:'Arbitrum One',base:'Base',polygon:'Polygon PoS',op:'OP Mainnet',ltc:'Litecoin',doge:'Dogecoin',bch:'Bitcoin Cash'};
 const css=document.createElement('style');css.textContent=`
 #chainSel{background:rgba(0,0,0,.28);border:1px solid var(--line);border-radius:9px;padding:5px 6px;font-size:12px;color:var(--txt);max-width:92px;outline:0}
 .badge.bsc{color:#f3ba2f;border-color:rgba(243,186,47,.55);background:rgba(243,186,47,.1)}.badge.arb{color:#5cbcff;border-color:rgba(40,160,240,.55);background:rgba(40,160,240,.1)}
@@ -15,7 +15,7 @@ const css=document.createElement('style');css.textContent=`
 .leadnote{margin-top:8px;padding:7px 10px;border-radius:10px;font-size:11.5px;color:#f6dd8a;border:1px dashed rgba(246,201,69,.55);background:rgba(246,201,69,.06)}
 @media (max-width:900px){#chainSel{max-width:92px;font-size:11.5px}.evmscan td:nth-child(4),.evmscan th:nth-child(4){display:none}}`;
 document.head.appendChild(css);
-const ALL=['eth',...EVMX];const col=c=>(CH[c]||{}).c;
+const UX=['ltc','doge','bch'],PX=[...EVMX,...UX];const ALL=['eth',...PX];const col=c=>(CH[c]||{}).c;
 // ---------- graph: chain colours ----------
 cy.style().selector('node[cc]').style({'border-color':'data(cc)','border-width':e=>e.data('focus')?3.5:2.6})
  .selector('edge[cc]').style({'line-color':'data(cc)','target-arrow-color':'data(cc)','line-opacity':.62})
@@ -25,9 +25,9 @@ function chainLegend(){const lg=$('legend');if(!lg)return;let el=lg.querySelecto
  if(!present.size||(present.size===1&&present.has('eth'))){if(el)el.remove();return}
  if(!el){el=document.createElement('div');el.className='chlegend';lg.appendChild(el)}
  el.innerHTML=[...present].map(c=>`<span><b style="border-color:${col(c)};background:${c==='eth'?'transparent':col(c)+'33'}"></b>${NAME[c]}</span>`).join('')}
-function paint(){cy.batch(()=>{cy.nodes().forEach(n=>{const i=n.data('info')||{};const c=i.chain||(/^(bsc|arb|base|polygon|op):/.exec(n.id())||[])[1];
-  if(EVMX.includes(c)){if(n.data('cc')!==col(c))n.data('cc',col(c));if(!i.name&&!n.data('note')&&i.kind!=='swap'&&i.kind!=='tx'){const l=CH[c].sym+' '+short(n.id());if(n.data('lbl')!==l)n.data('lbl',l)}}});
- cy.edges().forEach(e=>{if(e.data('xchain')||e.data('swapleg'))return;const a=e.source().data('info')||{},b=e.target().data('info')||{};const c=EVMX.includes(a.chain)?a.chain:EVMX.includes(b.chain)?b.chain:null;
+function paint(){cy.batch(()=>{cy.nodes().forEach(n=>{const i=n.data('info')||{};const c=i.chain||(/^(bsc|arb|base|polygon|op|ltc|doge|bch):/.exec(n.id())||[])[1];
+  if(PX.includes(c)){if(n.data('cc')!==col(c))n.data('cc',col(c));if(!i.name&&!n.data('note')&&i.kind!=='swap'&&i.kind!=='tx'){const l=CH[c].sym+' '+short(n.id());if(n.data('lbl')!==l)n.data('lbl',l)}}});
+ cy.edges().forEach(e=>{if(e.data('xchain')||e.data('swapleg'))return;const a=e.source().data('info')||{},b=e.target().data('info')||{};const c=PX.includes(a.chain)?a.chain:PX.includes(b.chain)?b.chain:null;
   if(c&&e.data('cc')!==col(c))e.data('cc',col(c))})});chainLegend()}
 window.ctEvmPaint=paint;
 const _add=window.add;window.add=function(d,focus){_add(d,focus);try{paint()}catch(e){console.warn(e)}};

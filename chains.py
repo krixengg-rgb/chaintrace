@@ -1,7 +1,7 @@
 import httpx, time, asyncio, re, json, sqlite3, os, base64
 from datetime import datetime
 from labels import label
-import addrutil, evmcfg
+import addrutil, evmcfg, utxo
 from evmcfg import EVM, EVM_CHAINS, NEW as EVM_NEW
 # HTTP cache: disposable. On an ephemeral disk (Render free) it is simply rebuilt after restarts.
 CACHE_PATH = os.environ.get("CHAINTRACE_CACHE", os.path.join(os.path.dirname(__file__), "cache.sqlite"))
@@ -60,7 +60,8 @@ PRICE = {"USDT": 1.0, "USDC": 1.0, "DAI": 1.0, "USDS": 1.0, "PYUSD": 1.0, "FDUSD
          "USDT0": 1.0, "USD₮0": 1.0, "USDC.E": 1.0, "USDBC": 1.0, "BUSD": 1.0, "BSC-USD": 1.0, "AXLUSDC": 1.0}
 _price_ts = [0.0]
 _price_task = [None]; _cg_fail = [0.0]
-CG_IDS = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "TRX": "tron", "XRP": "ripple", "BNB": "binancecoin", "POL": "polygon-ecosystem-token"}
+CG_IDS = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "TRX": "tron", "XRP": "ripple", "BNB": "binancecoin", "POL": "polygon-ecosystem-token",
+          "LTC": "litecoin", "DOGE": "dogecoin", "BCH": "bitcoin-cash"}
 ALIAS = {"BTC": ("WBTC", "BTCB", "CBBTC"), "ETH": ("WETH", "STETH"), "SOL": ("WSOL",), "BNB": ("WBNB",), "POL": ("WPOL", "MATIC", "WMATIC")}
 def _set_prices(m):
     for k, v in m.items():
@@ -151,6 +152,15 @@ async def rpc(url, method, params, ttl=None):
 def detect(q, chain=None):
     """-> (chain, 'address'|'tx'). 0x values are ambiguous across EVM chains: 'base:0x…' or chain= picks one (default Ethereum)."""
     q = (q or "").strip()
+    uq = q[3:] if q.startswith("tx:") else q
+    up, _, ur = uq.partition(":")
+    if up in utxo.CHAINS:   # "ltc:…", "doge:…", "bch:…" (address or tx hash)
+        if re.fullmatch(r"[0-9a-fA-F]{64}", ur): return up, "tx"
+        return (up, "address") if utxo.detect_addr(ur, up) == up or (up == "bch" and utxo.validate("bch", ur) is None) else (None, None)
+    if uq.lower().startswith("bitcoincash:"): return ("bch", "address") if utxo.cash_decode(uq) else (None, None)
+    if chain in utxo.CHAINS:
+        if re.fullmatch(r"[0-9a-fA-F]{64}", uq): return chain, "tx"
+        if utxo.detect_addr(uq, chain) == chain: return chain, "address"
     pc, rest = evmcfg.split(q)
     if pc:
         if re.fullmatch(r"0x[0-9a-fA-F]{40}", rest): return pc, "address"
@@ -162,6 +172,8 @@ def detect(q, chain=None):
     if re.fullmatch(r"0x[0-9a-fA-F]{64}", q): return ev, "tx"
     if addrutil.is_tron_address(q): return "tron", "address"
     if addrutil.is_xrp_address(q): return "xrp", "address"
+    uc = utxo.detect_addr(q)
+    if uc: return uc, "address"
     if re.fullmatch(r"[0-9a-fA-F]{64}", q): return "btc", "tx"   # bare 64-hex: BTC by default; pass chain=tron|xrp to force
     if re.fullmatch(r"(bc1[02-9ac-hj-np-z]{11,71}|[13][1-9A-HJ-NP-Za-km-z]{25,34})", q): return "btc", "address"
     if re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{80,90}", q): return "sol", "tx"
@@ -169,6 +181,8 @@ def detect(q, chain=None):
     return None, None
 
 def node(chain, a, tags=None):
+    if chain in utxo.CHAINS and a != "coinbase":
+        b = utxo.bare(chain, a); l = label(chain, b, tags); return {"id": utxo.nid(chain, b), "chain": chain, "address": b, **l}
     if chain in EVM_NEW:
         b = evmcfg.bare(a); l = label(chain, b, tags); return {"id": evmcfg.nid(chain, b), "chain": chain, "address": b, **l}
     l = label(chain, a, tags); return {"id": a, "chain": chain, **l}
@@ -1245,5 +1259,55 @@ def _mk_tx(c):
 # wire paginated fetchers (overrides any earlier ADDR stubs)
 ADDR = {"btc": btc_address, "eth": eth_address, "sol": sol_address, "tron": tron_address, "xrp": xrp_address, **{c: _mk_addr(c) for c in EVM_NEW}}
 TX = {"btc": btc_tx, "eth": eth_tx, "sol": sol_tx, "tron": tron_tx, "xrp": xrp_tx, **{c: _mk_tx(c) for c in EVM_NEW}}
+
+# ---------------- Litecoin / Dogecoin / Bitcoin Cash (utxo.py sources; same UTXO model as Bitcoin) ----------------
+def _mk_utxo_addr(c):
+    async def f(a, cursor=None, f=None, to=None, pages=1):
+        await ensure_prices(); unit = utxo.UNIT[c]; focus = utxo.nid(c, a)
+        e0 = utxo.validate(c, a)
+        if e0: raise ValueError(e0)
+        out = {"chain": c, "address": focus, "unit": unit}; edges, hist, cluster, warn = [], [], {focus}, []
+        for _ in range(max(1, pages)):
+            r = await utxo.page(c, a, cursor)
+            if r.get("balance") is not None and "balance" not in out: out["balance"] = r["balance"]; out["tx_count"] = r.get("tx_count")
+            if r["source"] and not r["source"].startswith("blockbook"): warn.append(f"{utxo.NAME[c]}: primary source unavailable, data from {r['source']}")
+            for t in r["txs"]:
+                tm = t["time"]
+                if not _inrange(tm, f, to): continue
+                ins, outs = t["ins"], t["outs"]; sent = ins.get(focus, 0); recv = outs.get(focus, 0)
+                if focus in ins:   # common-input-ownership heuristic (lead)
+                    cluster |= {x for x in ins if x != "coinbase"}
+                    for o, v in outs.items():
+                        if o != focus: edges.append({"source": focus, "target": o, "amount": v / 1e8, "unit": unit, "tx": t["txid"], "time": tm})
+                else:
+                    for i, v in ins.items():
+                        edges.append({"source": i, "target": focus, "amount": recv / 1e8 if len(ins) == 1 else v / 1e8, "unit": unit, "tx": t["txid"], "time": tm})
+                hist.append({"tx": t["txid"], "time": tm, "delta": (recv - sent) / 1e8, "unit": unit, "fee": t["fee"] / 1e8, "confirmed": t["confirmed"]})
+            cursor = r.get("next")
+            oldest = min((x["time"] or 9e12 for x in r["txs"]), default=None)
+            if not cursor or (f and oldest and oldest < f): cursor = None if (f and oldest and oldest < f) else cursor; break
+            if hist: break
+        out["nodes"], out["edges"], out["txs"] = _finish_page(c, focus, edges, hist); out["cp"] = CP_LAST[0]
+        out["cluster"] = sorted(cluster); out["next"] = cursor
+        if warn: out["warnings"] = list(dict.fromkeys(warn))
+        return out
+    f.__name__ = f"{c}_address"; return f
+def _mk_utxo_tx(c):
+    async def f(h):
+        t = await utxo.tx(c, h); unit = utxo.UNIT[c]; h = t["txid"]; tid = "tx:" + h; bt = t["time"]
+        nodes = {tid: {"id": tid, "chain": c, "kind": "tx", "name": f"{unit} tx {h[:10]}", "tags": [], "risk": 0}}; edges = []
+        for i, v in t["ins"].items(): edges.append({"source": i, "target": tid, "amount": v / 1e8, "unit": unit, "tx": h, "time": bt})
+        for o, v in t["outs"].items(): edges.append({"source": tid, "target": o, "amount": v / 1e8, "unit": unit, "tx": h, "time": bt})
+        for e in edges:
+            for k in ("source", "target"):
+                if e[k] not in nodes: nodes[e[k]] = node(c, e[k]) if e[k] != "coinbase" else {"id": "coinbase", "chain": c, "name": "coinbase (new coins)", "kind": None, "tags": [], "risk": 0}
+        return {"chain": c, "tx": h, "fee": t["fee"] / 1e8, "time": bt, "unit": unit, "source": t.get("source"),
+                "cluster": sorted(x for x in t["ins"] if x != "coinbase"), "nodes": list(nodes.values()), "edges": edges,
+                "inputs": [{"address": k, "value": v / 1e8} for k, v in t["ins"].items()], "outputs": [{"address": k, "value": v / 1e8} for k, v in t["outs"].items()]}
+    f.__name__ = f"{c}_tx"; return f
+for _c in utxo.CHAINS: ADDR[_c] = _mk_utxo_addr(_c); TX[_c] = _mk_utxo_tx(_c)
+UTXO = ("btc",) + utxo.CHAINS   # chains with inputs/outputs (change detection, common-input heuristic)
+def validate_address(chain, a): return utxo.validate(chain, a) if chain in utxo.CHAINS else None
+def norm_address(chain, a): return utxo.nid(chain, a) if chain in utxo.CHAINS else a
 
 import history   # deep EVM history sources (imports chains back; resolved at call time)

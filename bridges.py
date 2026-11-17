@@ -11,6 +11,7 @@ Heuristic matches (lead only): same address + same asset + amount within fee tol
 EVM L2s, using public RPC eth_getLogs. Never treated as evidence and never followed automatically.
 """
 import asyncio, time, json, re, os
+import utxo
 import httpx, chains
 from keccak import to_checksum
 
@@ -62,7 +63,7 @@ CH = {
  "near": ("NEAR", "https://nearblocks.io/txns/", "https://nearblocks.io/address/", False),
 }
 NATIVE = {"eth", "btc", "sol", "tron", "xrp"}   # chains whose graph ids are bare (not chain-prefixed)
-EXPANDABLE = NATIVE | {"bsc", "arb", "base", "polygon", "op"}   # chains ChainTrace can expand further (EVM L2s/BSC keep prefixed ids)
+EXPANDABLE = NATIVE | {"bsc", "arb", "base", "polygon", "op", "ltc", "doge", "bch"}   # chains ChainTrace can expand further (EVM L2s/BSC keep prefixed ids)
 WH = {1: "sol", 2: "eth", 4: "bsc", 5: "polygon", 6: "avax", 10: "fantom", 14: "celo", 15: "near", 16: "moonbeam", 21: "sui", 22: "aptos",
       23: "arb", 24: "op", 30: "base", 34: "scroll", 35: "mantle", 36: "blast", 38: "linea", 39: "berachain", 40: "sei", 44: "unichain",
       45: "worldchain", 46: "ink", 47: "hyperevm", 52: "sonic"}
@@ -86,11 +87,12 @@ def norm_addr(c, a):
 def norm_tx(c, h):
     if not h: return h
     h = str(h)
-    if (is_evm(c) or c == "btc") and re.fullmatch(r"(0x)?[0-9a-fA-F]{64}", h):
-        h = h.lower().removeprefix("0x"); return h if c == "btc" else "0x" + h
+    if (is_evm(c) or c in ("btc", "ltc", "doge", "bch")) and re.fullmatch(r"(0x)?[0-9a-fA-F]{64}", h):
+        h = h.lower().removeprefix("0x"); return "0x" + h if is_evm(c) else h
     return h
 def node_id(c, a):
     """graph node id: plain for chains ChainTrace can expand, chain-prefixed otherwise (same EVM address on another chain is a different account)"""
+    if c in utxo.CHAINS and not str(a).startswith("tx:"): return utxo.nid(c, a)
     return a if c in NATIVE else f"{c}:{a}"
 def side(c, tx=None, address=None, amount=None, unit=None, t=None, usd=None, status=None):
     c = c or "?"; address = norm_addr(c, address); tx = norm_tx(c, tx)
@@ -579,9 +581,9 @@ async def refresh_vaults():
         except Exception as e: print("vault fetch failed", name, e); _vts[0] = time.time() - 3300; continue
         for x in d or []:
             c = THOR.get(x.get("chain"))
-            if c not in NATIVE: continue
+            if c not in NATIVE and c not in utxo.CHAINS: continue
             for a, what in ((x.get("address"), "vault"), (x.get("router"), "router")):
-                if a: new[(c, a.lower() if c == "eth" else a)] = f"{name} {what} ({x.get('chain')})"
+                if a: new[(c, a.lower() if c == "eth" else utxo.bare(c, a) if c in utxo.CHAINS else a)] = f"{name} {what} ({x.get('chain')})"
     if new: VAULTS.clear(); VAULTS.update(new)
     return VAULTS
 KNOWN = {  # bridge contracts the bundled label set misses (names verified against Blockscout contract names / bridge docs)
@@ -591,7 +593,7 @@ KNOWN = {  # bridge contracts the bundled label set misses (names verified again
 }
 def decorate_vault(n, chain):
     """label a current THORChain/Maya inbound vault/router as a bridge endpoint (only if the node has no stronger label)"""
-    a = n.get("id") or ""; a = a.split(":", 1)[1] if chain in chains.EVM and ":" in a else a; k = (chain, a.lower() if chain in chains.EVM else a)
+    a = n.get("id") or ""; a = a.split(":", 1)[1] if (chain in chains.EVM or chain in utxo.CHAINS) and ":" in a else a; k = (chain, a.lower() if chain in chains.EVM else a)
     nm = VAULTS.get(k) or KNOWN.get(k)
     if nm and not n.get("kind"):
         n.update(kind="bridge", name=nm, risk=max(n.get("risk") or 0, 5), tags=sorted(set(n.get("tags") or []) | {"bridge"}))

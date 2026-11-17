@@ -129,7 +129,7 @@ def download():
 def build(include_unclear=False):
     rows = []
     def add(chain, addr, category, name, source, url=None, conf=None, entity=None):
-        if not addr or chain not in ("btc", "eth", "sol", "tron", "xrp", "bsc", "arb", "base", "polygon", "op"): return
+        if not addr or chain not in ("btc", "eth", "sol", "tron", "xrp", "bsc", "arb", "base", "polygon", "op", "ltc", "doge", "bch"): return
         addr = addr.strip().strip("'\"")
         if chain in ("eth", "bsc", "arb", "base", "polygon", "op"):
             if not re.fullmatch(r"0x[0-9a-fA-F]{40}", addr): return

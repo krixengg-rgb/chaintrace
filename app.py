@@ -71,7 +71,7 @@ def finish(d):
             try: deposits.decorate(by[focus], deposits.suggest(c, focus, d), endpoint_at=9)
             except Exception as ex: print("suggest failed", ex)
         if focus and focus in by and by[focus].get("suggested"): d["suggestion"] = by[focus]["suggested"]
-    if c in ("btc", "eth", "sol", "tron", "xrp"):
+    if c in ("btc", "eth", "sol", "tron", "xrp", "ltc", "doge", "bch"):
         for n in d["nodes"]:
             if not n.get("kind") and not str(n["id"]).startswith("tx:"): bridges.decorate_vault(n, c)   # live THORChain/Maya vaults = bridge
     for n in d["nodes"]: n["flag"] = n.get("kind") in labels.EXPO

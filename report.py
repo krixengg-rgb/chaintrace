@@ -37,7 +37,7 @@ def t_both(ts):
     a, b = datetime.fromtimestamp(ts, UK), datetime.fromtimestamp(ts, timezone.utc)
     return f"{t_uk(ts)}\n" + (b.strftime("%H:%M:%S UTC") if a.date() == b.date() else t_utc(ts))
 def t_line(ts): return f"{t_uk(ts)} ({datetime.fromtimestamp(ts, timezone.utc).strftime('%H:%M:%S UTC')})" if ts else "–"
-def code(c): return (c or "?").upper() if c in ("btc", "eth", "sol", "tron", "xrp") else {"bsc": "BSC", "arb": "ARB", "base": "BASE", "polygon": "POL", "op": "OP"}.get(c) or chain_name(c)
+def code(c): return (c or "?").upper() if c in ("btc", "eth", "sol", "tron", "xrp") else {"bsc": "BSC", "arb": "ARB", "base": "BASE", "polygon": "POL", "op": "OP", "ltc": "LTC", "doge": "DOGE", "bch": "BCH"}.get(c) or chain_name(c)
 def num(x, d=8):
     if x is None: return "–"
     try: x = float(x)
@@ -773,6 +773,7 @@ async def build(p):
         "Bitcoin: mempool.space REST API (address and transaction history, inputs and outputs, block times), with Blockstream (blockstream.info, same Esplora API) as a fallback.",
         "Ethereum: Blockscout public API (eth.blockscout.com) for transfers, token transfers and public tags. Public JSON-RPC endpoints (e.g. publicnode, drpc, Cloudflare) for balances. Ethplorer as a fallback.",
         "TRON: TronGrid (api.trongrid.io) for account info, native TRX TransferContract history and TRC-20 transfers (notably USDT-TRC20), with TronStack as a fallback. Addresses validated as base58check (T…) or hex 41….",
+        "Litecoin, Dogecoin and Bitcoin Cash: public Blockbook indexers (Zelcore / Atomic Wallet), with litecoinspace.org (Esplora), BlockCypher and the Blockchain.com Haskoin store as fallbacks. Bitcoin Cash addresses are shown in CashAddr form.",
         "XRP Ledger: public rippled JSON-RPC (xrplcluster.com, s1/s2.ripple.com) account_info and account_tx. Payments include destination tags (used by VASPs) and issued currencies with issuer.",
         "Solana: the public Solana JSON-RPC (getSignaturesForAddress / getTransaction), parsing native SOL and SPL token balance changes.",
         "Cross-chain: bridge indexers, all public and keyless: Wormholescan, deBridge DLN stats API, Mayan explorer API, Across API, THORChain/Maya Midgard, LayerZero Scan and Relay. THORChain/Maya inbound vault lists come from THORNode/MayaNode. EVM L2 public RPCs (Arbitrum, Optimism, Base, Polygon) are used for heuristic matching.",

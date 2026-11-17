@@ -28,9 +28,9 @@ METHODS = {
              "The most recent receipts are spent first. Victim funds are treated as leaving first when they are the latest funds to arrive."),
 }
 STABLE = {"USDT", "USDC", "DAI", "USDS", "PYUSD", "FDUSD", "TUSD", "USDE", "USDC.E", "BUSD", "USDT0", "USD₮0", "USDBC", "BSC-USD"}
-PXSYM = {"BTC": "BTC", "WBTC": "BTC", "CBBTC": "BTC", "BTCB": "BTC", "ETH": "ETH", "WETH": "ETH", "STETH": "ETH", "SOL": "SOL", "WSOL": "SOL", "XRP": "XRP",
+PXSYM = {"BTC": "BTC", "WBTC": "BTC", "CBBTC": "BTC", "BTCB": "BTC", "ETH": "ETH", "WETH": "ETH", "STETH": "ETH", "SOL": "SOL", "WSOL": "SOL", "XRP": "XRP", "LTC": "LTC", "DOGE": "DOGE", "BCH": "BCH",
          "BNB": "BNB", "WBNB": "BNB", "POL": "POL", "WPOL": "POL", "MATIC": "POL", "WMATIC": "POL"}
-NATIVE = {"btc": "BTC", "eth": "ETH", "sol": "SOL", "tron": "TRX", "xrp": "XRP", "bsc": "BNB", "arb": "ETH", "base": "ETH", "polygon": "POL", "op": "ETH"}
+NATIVE = {"btc": "BTC", "eth": "ETH", "sol": "SOL", "tron": "TRX", "xrp": "XRP", "bsc": "BNB", "arb": "ETH", "base": "ETH", "polygon": "POL", "op": "ETH", "ltc": "LTC", "doge": "DOGE", "bch": "BCH"}
 CATS = [  # (key, heading, statement wording)
     ("exchange", "Exchanges / VASPs", "received by addresses attributed to an exchange or other virtual asset service provider (VASP)"),
     ("bridge", "Bridges (not followed further)", "sent into a cross-chain bridge with no matched destination on the graph"),
@@ -107,6 +107,7 @@ async def _balance(chain, a):
         if chain == "btc":
             i = await chains.get(f"{chains.MP}/address/{a}", ttl=120); cs, ms = i["chain_stats"], i["mempool_stats"]
             return (cs["funded_txo_sum"] - cs["spent_txo_sum"] + ms["funded_txo_sum"] - ms["spent_txo_sum"]) / 1e8
+        if chain in chains.utxo.CHAINS: return await chains.utxo.balance(chain, a)
         if chain in chains.EVM:
             r = await chains.eth_rpc_any("eth_getBalance", [chains.evmcfg.bare(a), "latest"], 5, chain=chain); return int(r, 16) / 1e18
         if chain == "sol":
@@ -234,14 +235,14 @@ async def compute(p, spec=None, live_balances=True):
         try: d = await asyncio.wait_for(chains.TX[c](h if c != "eth" else h if h.startswith("0x") else "0x" + h), 15)
         except Exception as ex: errs.append(f"victim tx {h[:12]}…: could not be fetched ({type(ex).__name__})"); continue
         t = tnum(d.get("time")); add = []
-        if c == "btc":
+        if c in chains.UTXO:
             ins = {x["address"] for x in d.get("inputs") or []}
             srcs = [a for a in ins if is_victim(a)] or list(ins)
             src = srcs[0] if srcs else "tx:" + h
             for o in d.get("outputs") or []:
                 if o["address"] in ins: continue    # change back to the paying wallet
                 if suspect and not same(o["address"], suspect): continue
-                add.append({"source": src, "target": o["address"], "amount": o["value"], "unit": "BTC", "tx": h, "time": t})
+                add.append({"source": src, "target": o["address"], "amount": o["value"], "unit": d.get("unit") or "BTC", "tx": h, "time": t})
         else:
             for e in d.get("edges") or []:
                 s_, t_ = e["source"], e["target"]

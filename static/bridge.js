@@ -12,7 +12,7 @@ const XC={base:['#3d7bff','Base','B','https://basescan.org/tx/','https://basesca
  xrp:['#cfd8e3','XRP','✕','https://xrpscan.com/tx/','https://xrpscan.com/account/'],thor:['#33ff99','THOR','ᚱ','https://runescan.io/tx/','https://runescan.io/address/'],
  sui:['#4da2ff','Sui','S','https://suiscan.xyz/mainnet/tx/','https://suiscan.xyz/mainnet/account/'],gaia:['#6f7390','Cosmos','⚛','https://www.mintscan.io/cosmos/tx/','https://www.mintscan.io/cosmos/address/']};
 for(const[k,[c,n,sym,tx,ad]]of Object.entries(XC))if(!CH[k])CH[k]={c,n,sym,tx,ad,foreign:1};
-const NATIVE=['btc','eth','sol','tron','xrp','bsc','arb','base','polygon','op'];   // expandable chains (BSC/L2 ids are chain-prefixed)
+const NATIVE=['btc','eth','sol','tron','xrp','bsc','arb','base','polygon','op','ltc','doge','bch'];   // expandable chains (BSC/L2 ids are chain-prefixed)
 const css=document.createElement('style');css.textContent=`
 .badge.xc{color:#9fe7f5;border-color:rgba(34,211,238,.45);background:rgba(34,211,238,.08)}
 .xcard{overflow-wrap:anywhere;min-width:0;border:1px solid rgba(34,211,238,.35);box-shadow:0 0 0 1px rgba(34,211,238,.08) inset}
@@ -61,7 +61,7 @@ function matchH(m,i,opts={}){const h=m.method==='heuristic';
 const CAVEAT='<div class="caveat">⚠ Deterministic = linked by the bridge’s own indexer (message / order id). <b>Heuristic matches are investigative leads, not evidence</b>: amount + time + same-address coincidence only. Verify on both explorers before relying on any link.</div>';
 let LAST=[];   // matches currently listed (index = button arg)
 window.ctBridgeAdd=i=>{const m=LAST[i];if(!m||!m.graph)return;add(m.graph,null);const e=m.graph.edges[0];if(e){const x=cy.getElementById(e.source+'>'+e.target+(e.unit||''));if(x.length){cy.elements().unselect();x.select();cy.animate({fit:{eles:x.connectedNodes(),padding:90}},{duration:400})}}toast(m.method==='heuristic'?'Lead added (dashed amber)':'Cross-chain hop added')};
-window.ctBridgeTrace=i=>{const m=LAST[i];if(!m)return;const c=m.dst.chain;$('q').value=(typeof EVMX!=='undefined'&&EVMX.includes(c)?c+':':'')+m.dst.address;if(c==='eth'&&$('chainSel'))$('chainSel').value='auto';setBadge();go()};
+window.ctBridgeTrace=i=>{const m=LAST[i];if(!m)return;const c=m.dst.chain;$('q').value=(typeof EVMX!=='undefined'&&EVMX.includes(c)||['ltc','doge','bch'].includes(c)?c+':':'')+String(m.dst.address).replace(/^bitcoincash:/i,'');if(['ltc','doge','bch'].includes(c)&&$('chainSel'))$('chainSel').value=c;if(c==='eth'&&$('chainSel'))$('chainSel').value='auto';setBadge();go()};
 function listH(j,title,opts={}){const ms=j.matches||[],hs=j.heuristic||[];const all=ms.concat(hs);const base=LAST.length;LAST=LAST.concat(all);
  const tried=(j.tried||[]).map(t=>`${esc(t.provider)}${t.error?' ⚠':''}`).join(' · ');
  return `<div class="card glass xcard" id="${opts.id||''}"><h3>⇄ ${title}<span class="sp"></span><span class="dim" style="text-transform:none;letter-spacing:0">${all.length} match(es)${j.cached?' · cached':''}</span></h3>
