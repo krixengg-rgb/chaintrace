@@ -379,6 +379,7 @@ TX_PROVIDERS = {  # name -> (fn, which hash formats)
  "wormhole": (wormhole_tx, ("eth", "sol")), "debridge": (debridge_tx, ("eth", "sol")), "mayan": (mayan_tx, ("eth", "sol")),
  "across": (across_tx, ("eth",)), "thorchain/maya": (midgard_tx, ("eth", "btc")), "layerzero": (layerzero_tx, ("eth",)), "relay": (relay_tx, ("eth", "sol", "btc")),
  "canonical": (lambda h: __import__("canonical").canonical_tx(h), ("eth",)),
+ "cctp": (lambda h: __import__("stable").cctp_tx(h), ("eth", "sol")),
 }
 ADDR_PROVIDERS = {
  "wormhole": (wormhole_addr, ("eth", "sol")), "debridge": (debridge_addr, ("eth", "sol")), "mayan": (mayan_addr, ("eth", "sol")),
@@ -387,6 +388,7 @@ ADDR_PROVIDERS = {
 SUPPORTED = [
  {"bridge": "OP Mainnet / Base canonical bridge (OptimismPortal deposits + withdrawals)", "chains": "ETH ⇄ OP, ETH ⇄ Base", "method": "deterministic (L2 deposit hash computed from the L1 log and confirmed on L2; withdrawalHash → L1 prove/finalize logs)", "source": "public RPCs + Ethereum Blockscout logs"},
  {"bridge": "Arbitrum One canonical bridge (ETH deposits, withdrawals incl. token gateways)", "chains": "ETH ⇄ ARB", "method": "deterministic (ArbitrumDepositTx hash computed + confirmed; L2ToL1Tx position → Outbox execution)", "source": "public RPCs + Ethereum Blockscout logs"},
+ {"bridge": "Circle CCTP V1 + V2 (USDC burn → mint)", "chains": "ETH, ARB, BASE, OP, POLYGON, AVAX, SOL, Unichain, Linea, …", "method": "deterministic (Circle attestation links burn to mint; the mint is re-checked on the destination chain)", "source": "iris-api.circle.com + public RPCs"},
  {"bridge": "Wormhole (Portal, NTT, CCTP, Connect)", "chains": "ETH, SOL, L2s, BSC, …", "method": "deterministic", "source": "api.wormholescan.io"},
  {"bridge": "deBridge DLN", "chains": "ETH, SOL, L2s, BSC", "method": "deterministic", "source": "stats-api.dln.trade"},
  {"bridge": "Mayan (Swift, MCTP, WH)", "chains": "ETH, SOL, L2s", "method": "deterministic", "source": "explorer-api.mayan.finance"},
@@ -438,7 +440,7 @@ async def match_tx(h, chain=None, heuristic=True):
     ms, tried = await _run(TX_PROVIDERS, h, fmt)
     hn = h.lower().removeprefix("0x")
     ms = [m for m in ms if hn in ((m["src"].get("tx") or "").lower().removeprefix("0x"), (m["dst"].get("tx") or "").lower().removeprefix("0x"))]   # indexer must echo our hash
-    PN = {"canonical (on-chain)": "canonical", "wormholescan": "wormhole", "dln.trade": "debridge", "mayan.finance": "mayan", "across.to": "across", "midgard": "thorchain/maya", "layerzeroscan": "layerzero", "relay.link": "relay"}
+    PN = {"canonical (on-chain)": "canonical", "wormholescan": "wormhole", "dln.trade": "debridge", "mayan.finance": "mayan", "across.to": "across", "midgard": "thorchain/maya", "layerzeroscan": "layerzero", "relay.link": "relay", "iris.circle.com": "cctp"}
     for t in tried: t["matches"] = sum(1 for m in ms if PN.get(m["provider"]) == t["provider"])
     for m in ms: m["side"] = "src" if (m["src"].get("tx") or "").lower() == h.lower() else ("dst" if (m["dst"].get("tx") or "").lower() == h.lower() else "src")
     res = {"query": h, "chain": chain or fmt, "kind": "tx", "matches": ms, "tried": tried, "heuristic": [], "heuristic_note": None}
@@ -591,6 +593,13 @@ KNOWN = {  # bridge contracts the bundled label set misses (names verified again
  ("eth", "0x337685fdab40d39bd02028545a4ffa7d287cc3e2"): "Mayan: Forwarder", ("eth", "0xc38e4e6a15593f908255214653d3d947ca1c2338"): "Mayan: Swift",
  ("eth", "0xa5f565650890fba1824ee0f21ebbbf660a179934"): "Relay: Receiver", ("eth", "0xd37bbe5744d730a1d98d8dc97c42f0ca46ad7146"): "THORChain: Router",
 }
+# Circle CCTP contracts (developers.circle.com/cctp/references/contract-addresses + /cctp/v1/evm-smart-contracts, checked 2026-11-20)
+for _c in ("eth", "op", "arb", "base", "polygon"):
+    KNOWN[(_c, "0x28b5a0e9c621a5badaa536219b3a228c8168cf5d")] = "Circle CCTP: TokenMessengerV2"; KNOWN[(_c, "0xfd78ee919681417d192449715b2594ab58f5d002")] = "Circle CCTP: TokenMinterV2"
+for _c, _m, _t in (("eth", "0xbd3fa81b58ba92a82136038b25adec7066af3155", "0xc4922d64a24675e16e1586e3e3aa56c06fabe907"), ("op", "0x2b4069517957735be00cee0fadae88a26365528f", "0x33e76c5c31cb928dc6fe6487ab3b2c0769b1a1e3"),
+                   ("arb", "0x19330d10d9cc8751218eaf51e8885d058642e08a", "0xe7ed1fa7f45d05c508232aa32649d89b73b8ba48"), ("base", "0x1682ae6375c4e4a97e4b583bc394c861a46d8962", "0xe45b133ddc64be80252b0e9c75a8e74ef280eed6"),
+                   ("polygon", "0x9daf8c91aefae50b9c0e69629d3f6ca40ca3b3fe", "0x10f7835f827d6cf035115e10c50a853d7fb2d2ec")):
+    KNOWN[(_c, _m)] = "Circle CCTP: TokenMessenger (V1)"; KNOWN[(_c, _t)] = "Circle CCTP: TokenMinter (V1)"
 def decorate_vault(n, chain):
     """label a current THORChain/Maya inbound vault/router as a bridge endpoint (only if the node has no stronger label)"""
     a = n.get("id") or ""; a = a.split(":", 1)[1] if (chain in chains.EVM or chain in utxo.CHAINS) and ":" in a else a; k = (chain, a.lower() if chain in chains.EVM else a)

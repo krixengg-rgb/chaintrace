@@ -1,6 +1,6 @@
 """AutoTrace: follow funds hop-by-hop until they reach labelled endpoints (exchange, mixer, bridge,
 sanctioned, scam, ...) or a cap is hit. Runs as a cancellable background job sharing trace.JOBS."""
-import asyncio, time, uuid, chains, trace, deposits, bridges
+import asyncio, time, uuid, chains, trace, deposits, bridges, stable
 from labels import EXPO, RISK
 ENDPOINT = set(RISK) - {"other", "miner"}
 ENDPOINT_AT = 0.85
@@ -8,7 +8,7 @@ SEM = {"sol": 1, "btc": 3, "ltc": 2, "doge": 2, "bch": 2, "eth": 3, "tron": 2, "
 def _sh(x): return x if x.startswith("tx:") else x[:8] + "…"
 MAX_BRIDGE_HOPS = 8
 NATIVE_UNIT = {"btc": "BTC", "eth": "ETH", "sol": "SOL", "tron": "TRX", "xrp": "XRP", "ltc": "LTC", "doge": "DOGE", "bch": "BCH", **{c: v["unit"] for c, v in chains.EVM.items()}}
-async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges=False, follow_change=False):
+async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges=False, follow_change=False, stables=False):
     J = trace.JOBS[job]; c, kind = chains.detect(q); J.update(chain=c, status="running"); t0 = time.time()
     nodes, edges, parent, depth_of = {}, {}, {}, {}
     sems = {k: asyncio.Semaphore(v) for k, v in SEM.items()}; stop = None
@@ -18,6 +18,7 @@ async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, s
     except Exception: pass
     def keep(e, cc=None):   # dust / spam filter
         if set(e.get("flags") or []) & trace.NOISE: return False
+        if stables and not (stable.is_stable_unit((e.get("unit") or "").rstrip("⇄")) and (not e.get("token") or stable.official(cc or ch(e["source"]) or c, e["token"]))): return False
         if e.get("usd") is None: return not skip_unpriced and e.get("unit") == NATIVE_UNIT.get(cc or c)
         return e["usd"] >= min_usd
     def take(a, e, other, d, nxt, lab, cc=None):
@@ -166,13 +167,13 @@ async def _follow_change(a, d, J, min_conf=0.6):
             if o["n"] == c_["n"] or o["address"] == a: continue
             out.append(({"source": a, "target": o["address"], "amount": o["value"], "unit": "BTC", "tx": h, "time": t, "count": 1, "usd": chains.usd_of(o["value"], "BTC"), "peeled": {"id": "auto"}}, False))
     return out or None
-def start(q, direction="forward", max_hops=6, max_nodes=150, max_secs=120, min_usd=100.0, topk=3, skip_unpriced=True, follow_bridges=False, follow_change=False):
+def start(q, direction="forward", max_hops=6, max_nodes=150, max_secs=120, min_usd=100.0, topk=3, skip_unpriced=True, follow_bridges=False, follow_change=False, stables=False):
     trace._prune(); job = uuid.uuid4().hex[:10]
     trace.JOBS[job] = {"id": job, "q": q, "type": "autotrace", "hops": max_hops, "direction": direction, "status": "queued", "progress": "",
                        "nodes": [], "edges": [], "paths": [], "endpoints": [], "errors": [], "started": time.time(), "capped": False,
-                       "params": {"max_hops": max_hops, "max_nodes": max_nodes, "max_secs": max_secs, "min_usd": min_usd, "topk": topk, "skip_unpriced": skip_unpriced, "follow_bridges": follow_bridges, "follow_change": follow_change}}
+                       "params": {"max_hops": max_hops, "max_nodes": max_nodes, "max_secs": max_secs, "min_usd": min_usd, "topk": topk, "skip_unpriced": skip_unpriced, "follow_bridges": follow_bridges, "follow_change": follow_change, "stables": stables}}
     async def _go():
-        try: await asyncio.wait_for(run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges, follow_change), max_secs + 60)
+        try: await asyncio.wait_for(run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges, follow_change, stables), max_secs + 60)
         except asyncio.CancelledError: trace.JOBS[job].update(status="cancelled", progress="cancelled by user")
         except Exception as ex: trace.JOBS[job].update(status="error", progress=f"{type(ex).__name__}: {ex}")
         finally: trace.TASKS.pop(job, None)

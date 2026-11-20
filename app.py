@@ -167,7 +167,7 @@ async def trace_start(q: str, hops: int = 2, direction: str = "forward", topk: i
     return {"job": trace.start(q.strip(), hops, direction, topk, max_nodes)}
 @app.post("/api/autotrace")
 async def autotrace_start(q: str, direction: str = "forward", max_hops: int = 6, max_nodes: int = 150, max_secs: int = 120,
-                          min_usd: float = 100, topk: int = 3, skip_unpriced: bool = True, follow_bridges: bool = False, follow_change: bool = False, chain: str | None = None):
+                          min_usd: float = 100, topk: int = 3, skip_unpriced: bool = True, follow_bridges: bool = False, follow_change: bool = False, chain: str | None = None, stables: bool = False):
     c, kind = chains.detect(q, chain); q = chains.evmcfg.nid(c, q.strip()) if c in chains.EVM_NEW else q
     if not c: raise HTTPException(400, "Unrecognised address / tx hash")
     if direction not in ("forward", "backward"): raise HTTPException(400, "direction must be forward or backward")
@@ -175,7 +175,7 @@ async def autotrace_start(q: str, direction: str = "forward", max_hops: int = 6,
     topk = max(1, min(6, topk)); min_usd = max(0.0, min_usd)
     if sum(1 for j in trace.JOBS.values() if j["status"] in ("queued", "running")) >= MAX_RUNNING_TRACES:
         raise HTTPException(429, "too many traces running, try again shortly")
-    return {"job": autotrace.start(q.strip(), direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges, follow_change)}
+    return {"job": autotrace.start(q.strip(), direction, max_hops, max_nodes, max_secs, min_usd, topk, skip_unpriced, follow_bridges, follow_change, stables)}
 @app.get("/api/trace/{job}")
 def trace_get(job: str):
     j = trace.JOBS.get(job)
@@ -307,6 +307,23 @@ async def risk_api(q: str, chain: str = None, hops: int = 2):
     except HTTPException: raise
     except asyncio.TimeoutError: raise HTTPException(504, "risk scoring timed out; retry (lookups are cached)")
     except Exception as ex: raise HTTPException(502, f"upstream error: {type(ex).__name__}: {ex}")
+@app.get("/api/stable")
+async def stable_api(q: str, chain: str = None):
+    """USDT / USDC view of an address: issuer blacklist / freeze status (read on-chain) + stablecoin flows per token."""
+    import stable
+    c, kind = chains.detect(q, chain)
+    if kind != "address": raise HTTPException(400, "give an address")
+    d, bl = await asyncio.gather(lookup(q, chain), asyncio.wait_for(stable.blacklist(c, q.strip()), 15), return_exceptions=True)
+    if isinstance(d, Exception): raise d if isinstance(d, HTTPException) else HTTPException(502, f"upstream error: {d}")
+    return {"address": d.get("address"), "chain": d.get("chain"), "blacklist": bl if not isinstance(bl, Exception) else [], "blacklist_error": None if not isinstance(bl, Exception) else f"{type(bl).__name__}: {bl}",
+            "flows": stable.summary(d), "official": [{"chain": k[0], "token": k[1], "symbol": v[0], "issuer": v[2], "source": v[3]} for k, v in stable.OFFICIAL.items() if k[0] == d.get("chain")],
+            "note": "Blacklist status is read live from the token contracts (deterministic). Flows cover the fetched history only. Cross-chain hops: Circle CCTP matches are deterministic (Circle attestation); other bridge matches marked heuristic are leads only."}
+@app.get("/api/cctp")
+async def cctp_api(tx: str):
+    """Circle CCTP burn -> mint match for a burn or mint transaction (deterministic, Circle attestation + on-chain re-check)."""
+    import stable
+    try: return {"query": tx.strip(), "matches": await asyncio.wait_for(stable.cctp_tx(tx.strip()), LOOKUP_TIMEOUT)}
+    except asyncio.TimeoutError: raise HTTPException(504, "CCTP lookup timed out; retry")
 @app.get("/api/btc/peel")
 async def btc_peel(q: str, max_hops: int = 12, min_conf: float = 0.6):
     """follow likely change outputs (peel chain) from a BTC tx or address; peeled payments are branches. Heuristic lead."""

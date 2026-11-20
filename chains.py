@@ -691,7 +691,7 @@ async def evm_address(a, cursor=None, f=None, to=None, pages=1, chain="eth"):
             try: rate = float(tok.get("exchange_rate")) if tok.get("exchange_rate") else None
             except Exception: rate = None
             fl = token_flags(tok, rate, v)
-            if fr and too: edges.append({"source": fr["hash"], "target": too["hash"], "amount": v, "tx": t.get("transaction_hash"), "unit": sym, "time": ts, "rate": rate, "flags": fl})
+            if fr and too: edges.append({"source": fr["hash"], "target": too["hash"], "amount": v, "tx": t.get("transaction_hash"), "unit": sym, "time": ts, "rate": rate, "flags": fl, **({"token": tok.get("address_hash") or tok.get("address")} if (tok.get("address_hash") or tok.get("address")) else {})})
             hist.append({"tx": t.get("transaction_hash"), "time": ts, "delta": v if (too and too["hash"].lower()==al) else -v, "unit": sym, "method": "token transfer", "rate": rate, "flags": fl})
         for t in it:
             fr, too = t.get("from"), t.get("to"); reg(fr); reg(too); ts = ts_of(t.get("timestamp")); times.append(ts)
