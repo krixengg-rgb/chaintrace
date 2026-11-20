@@ -289,6 +289,14 @@ async def btc_cluster(address: str, depth: int = 2, change: bool = False, max_tx
     try: return await asyncio.wait_for(cluster.cluster(a, max(1, min(3, depth)), max(10, min(400, max_txs)), max(5, min(300, max_addrs)), 2, secs, change), secs + 4)
     except asyncio.TimeoutError: raise HTTPException(504, "clustering timed out; retry (results are cached) or lower the caps")
     except Exception as ex: raise HTTPException(502, f"btc upstream error: {ex}")
+@app.get("/api/exposure")
+async def exposure_api(q: str, chain: str = None, hops: int = 2, k: int = 6):
+    """mixer / privacy / no-KYC swap / gambling exposure, direct and n-hop indirect, % of value. Labels from cited public sources. Indicative lead."""
+    import exposure
+    try: return await asyncio.wait_for(exposure.compute(q.strip(), chain or None, max(1, min(4, hops)), max(2, min(10, k)), LOOKUP_TIMEOUT - 4), LOOKUP_TIMEOUT + 2)
+    except ValueError as ex: raise HTTPException(400, str(ex))
+    except asyncio.TimeoutError: raise HTTPException(504, "exposure search timed out; retry (lookups are cached) or lower the hops")
+    except Exception as ex: raise HTTPException(502, f"upstream error: {type(ex).__name__}: {ex}")
 @app.get("/api/btc/peel")
 async def btc_peel(q: str, max_hops: int = 12, min_conf: float = 0.6):
     """follow likely change outputs (peel chain) from a BTC tx or address; peeled payments are branches. Heuristic lead."""

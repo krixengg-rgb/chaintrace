@@ -1,0 +1,10 @@
+{
+ "_about": "Hand-curated exposure labels that are not (or not reliably) in the bulk label datasets. Every entry cites the public source it was taken from. Do not add an address without a documented public source.",
+ "entries": [
+  {"c": "eth", "a": "0xfa7093cdd9ee6932b4eb2c9e1cde7ce00b1fa4b9", "cat": "privacy", "name": "Railgun: smart wallet / relay (shielded pool proxy)", "src": "Railgun-Community shared-models network-config.ts (RailgunProxyContract, Ethereum); Etherscan public name tag 'Railgun: Relay'", "url": "https://raw.githubusercontent.com/Railgun-Community/shared-models/main/src/models/network-config.ts"},
+  {"c": "arb", "a": "0xfa7093cdd9ee6932b4eb2c9e1cde7ce00b1fa4b9", "cat": "privacy", "name": "Railgun: smart wallet (shielded pool proxy, Arbitrum)", "src": "Railgun-Community shared-models network-config.ts (RailgunProxyContract, Arbitrum)", "url": "https://raw.githubusercontent.com/Railgun-Community/shared-models/main/src/models/network-config.ts"},
+  {"c": "bsc", "a": "0x590162bf4b50f6576a459b75309ee21d92178a10", "cat": "privacy", "name": "Railgun: smart wallet (shielded pool proxy, BNB Chain)", "src": "Railgun-Community shared-models network-config.ts (RailgunProxyContract, BNB Chain)", "url": "https://raw.githubusercontent.com/Railgun-Community/shared-models/main/src/models/network-config.ts"},
+  {"c": "polygon", "a": "0x19b620929f97b7b990801496c3b361ca5def8c71", "cat": "privacy", "name": "Railgun: smart wallet (shielded pool proxy, Polygon)", "src": "Railgun-Community shared-models network-config.ts (RailgunProxyContract, Polygon)", "url": "https://raw.githubusercontent.com/Railgun-Community/shared-models/main/src/models/network-config.ts"},
+  {"c": "eth", "a": "0xf1da173228fcf015f43f3ea15abbb51f0d8f1123", "cat": "nokyc_swap", "name": "eXch: hot wallet (no-KYC instant swap; service closed April 2025)", "src": "Etherscan public name tag 'eXch: Hot wallet'; eXch's own Bitcointalk statement quoted by Cointelegraph (23 Feb 2025)", "url": "https://cointelegraph.com/news/crypto-exchangexch-denies-laundering-bybit-hacked-funds"}
+ ]
+}
