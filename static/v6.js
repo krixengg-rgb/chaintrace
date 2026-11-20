@@ -22,7 +22,8 @@ function applyDir(){cy.batch(()=>{cy.edges().removeClass('din dout');if(!V.dir)r
  cy.edges().forEach(e=>{if(e.hasClass('hot')||e.hasClass('hotx'))return;const s=ids.has(e.data('source')),t=ids.has(e.data('target'));if(t&&!s)e.addClass('din');else if(s&&!t)e.addClass('dout')})})}
 // ---------- entity grouping ----------
 function entName(s){s=String(s||'').split(/[:|(]/)[0].replace(/\b(hot|cold|deposit)\s*wallet\b/ig,'').replace(/\s+[\d.,]+\s*[kKmM]?\s*[A-Za-z]{2,6}\s*$/,'').replace(/[\s_#-]+\d+\s*$/,'').trim();return s.length>=2?s:null}
-function gkey(n){const i=n.data('info')||{};if(!i.id||String(i.id).startsWith('tx:')||n.data('focus'))return null;   // the focus/root stays outside groups
+function gkey(n){const i=n.data('info')||{};if(i.cluster&&i.cluster.root&&i.id)return['wal:'+i.cluster.root,'Likely same wallet · '+short(i.cluster.root)+' (heuristic lead)','cluster'];   // v23 cluster panel (root included)
+ if(!i.id||String(i.id).startsWith('tx:')||n.data('focus'))return null;   // the focus/root stays outside groups
  if(i.peel&&i.peel.id)return['peel:'+i.peel.id,'Peel chain · '+(i.peel.hops||'?')+' hops (heuristic lead)','peel'];
  const sg=i.suggested;if(sg){const ent=sg.entity||(sg.label||'').replace(/ deposit$/,'');if(ent)return['dep:'+ent.toLowerCase(),ent+' deposits (suggested)','exchange']}
  if(i.kind&&i.name){const ent=entName(i.name);if(ent)return['ent:'+ent.toLowerCase().replace(/[^a-z0-9]/g,''),ent,i.kind]}
@@ -31,8 +32,8 @@ function gkey(n){const i=n.data('info')||{};if(!i.id||String(i.id).startsWith('t
 const kids=g=>cy.nodes().filter(n=>n.data('gof')===g.id()||n.data('parent')===g.id());
 function regroup(){if(!V.group){ungroupAll();return}const B={};
  cy.nodes().forEach(n=>{if(n.data('grp'))return;const k=gkey(n);if(k)(B[k[0]]=B[k[0]]||{k,m:[]}).m.push(n)});
+ for(const[key,b]of Object.entries(B)){const gid='grp:'+key;if(b.m.length>=2&&!cy.getElementById(gid).length)cy.add({group:'nodes',data:{id:gid,grp:1,gname:b.k[1],gkind:b.k[2]||undefined}})}   // create parents outside the batch: move() into a parent added in the same batch is lost
  cy.batch(()=>{for(const[key,b]of Object.entries(B)){if(b.m.length<2)continue;const gid='grp:'+key;let g=cy.getElementById(gid);
-   if(!g.length)g=cy.add({group:'nodes',data:{id:gid,grp:1,gname:b.k[1],gkind:b.k[2]||undefined}});
    g.data('lbl',b.k[1]+' · '+b.m.length);const col=g.data('collapsed');
    for(const n of b.m){if(col){if(n.data('gof')!==gid){n.data('gof',gid);n.move({parent:null});n.addClass('gmem')}}else if(n.data('parent')!==gid)n.move({parent:gid})}}
   cy.nodes('[?grp]').forEach(g=>{if(!kids(g).length)g.remove()})})}
@@ -52,6 +53,8 @@ function split(g){if(!g.data('collapsed'))return;const k=kids(g);
 function toggleGroup(g){if(!g||!g.length)return;if(!g.data('grp')){const p=g.data('parent')||g.data('gof');if(!p)return toast('Not in a group');g=cy.getElementById(p)}
  g.data('collapsed')?split(g):collapse(g);toast((g.data('collapsed')?'Collapsed ':'Split ')+g.data('gname'))}
 window.ctToggleGroup=id=>toggleGroup(cy.getElementById(id));
+window.ctCollapse=id=>{const g=cy.getElementById(id);if(g.length)collapse(g)};window.ctSplit=id=>{const g=cy.getElementById(id);if(g.length)split(g)};
+window.ctGroupOn=()=>{if(!V.group){V.group=true;save();const b=document.querySelector('[onclick="ctSet(\'group\')"]');if(b)b.classList.add('on')}};
 window.ctCollapseAll=on=>{cy.nodes('[?grp]').forEach(g=>on?collapse(g):split(g))};
 function refresh(lay){regroup();applyNoise();rebuildMeta();applyDir();if(lay)relayout();autosave()}
 window.ctRefresh=refresh;

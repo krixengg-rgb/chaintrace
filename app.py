@@ -263,6 +263,16 @@ async def btc_change(tx: str, min_conf: float = 0.6):
     try: return await asyncio.wait_for(peel.change(tx.strip().lower(), max(0.5, min(0.95, min_conf))), LOOKUP_TIMEOUT)
     except asyncio.TimeoutError: raise HTTPException(504, "mempool.space too slow right now; retry")
     except Exception as ex: raise HTTPException(502, f"btc upstream error: {ex}")
+@app.get("/api/btc/cluster")
+async def btc_cluster(address: str, depth: int = 2, change: bool = False, max_txs: int = 200, max_addrs: int = 150, max_secs: float = 20):
+    """'likely same wallet': common-input-ownership clustering with CoinJoin exclusion, optional change heuristic. Bounded. Heuristic lead."""
+    import cluster
+    a = address.strip()
+    if chains.detect(a) != ("btc", "address"): raise HTTPException(400, "give a Bitcoin address")
+    secs = max(5.0, min(float(max_secs), LOOKUP_TIMEOUT - 3))
+    try: return await asyncio.wait_for(cluster.cluster(a, max(1, min(3, depth)), max(10, min(400, max_txs)), max(5, min(300, max_addrs)), 2, secs, change), secs + 4)
+    except asyncio.TimeoutError: raise HTTPException(504, "clustering timed out; retry (results are cached) or lower the caps")
+    except Exception as ex: raise HTTPException(502, f"btc upstream error: {ex}")
 @app.get("/api/btc/peel")
 async def btc_peel(q: str, max_hops: int = 12, min_conf: float = 0.6):
     """follow likely change outputs (peel chain) from a BTC tx or address; peeled payments are branches. Heuristic lead."""
