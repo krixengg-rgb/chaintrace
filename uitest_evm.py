@@ -170,6 +170,7 @@ async def ui(b):
     await pg.wait_for_timeout(2500); await pg.evaluate("cy.fit(undefined,70)")
     if SHOTS: await pg.screenshot(path=SHOT("bridge_desktop"))
     # 6 loss calculator: BNB pricing on the BSC swap payment, then PDF + evidence pack
+    await pg.wait_for_timeout(35000)   # let the 60/min API rate-limit window drain (earlier steps are request-heavy)
     await pg.goto(U + f"/?q=bsc:{NATIVE[0][1]}"); await pg.wait_for_function("cy.nodes().length>=2", timeout=90000); await pg.wait_for_timeout(1500)
     trader = await pg.evaluate(f"cy.nodes().map(n=>n.id()).find(i=>i.toLowerCase().includes('{NATIVE[0][2]}'))")
     router = await pg.evaluate(f"cy.nodes().map(n=>n.id()).find(i=>i.toLowerCase().includes('{NATIVE[0][3]}'))")
