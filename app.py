@@ -297,6 +297,16 @@ async def exposure_api(q: str, chain: str = None, hops: int = 2, k: int = 6):
     except ValueError as ex: raise HTTPException(400, str(ex))
     except asyncio.TimeoutError: raise HTTPException(504, "exposure search timed out; retry (lookups are cached) or lower the hops")
     except Exception as ex: raise HTTPException(502, f"upstream error: {type(ex).__name__}: {ex}")
+@app.get("/api/risk")
+async def risk_api(q: str, chain: str = None, hops: int = 2):
+    """per-address risk score 0-100 with a transparent weighted breakdown. Indicative lead, not evidence."""
+    import risk
+    async def lk(a, c): return await lookup(a, c)
+    try: return await asyncio.wait_for(risk.compute(q.strip(), chain or None, lk, max(1, min(3, hops)), LOOKUP_TIMEOUT - 4), LOOKUP_TIMEOUT + 4)
+    except ValueError as ex: raise HTTPException(400, str(ex))
+    except HTTPException: raise
+    except asyncio.TimeoutError: raise HTTPException(504, "risk scoring timed out; retry (lookups are cached)")
+    except Exception as ex: raise HTTPException(502, f"upstream error: {type(ex).__name__}: {ex}")
 @app.get("/api/btc/peel")
 async def btc_peel(q: str, max_hops: int = 12, min_conf: float = 0.6):
     """follow likely change outputs (peel chain) from a BTC tx or address; peeled payments are branches. Heuristic lead."""

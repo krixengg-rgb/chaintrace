@@ -313,6 +313,18 @@ def prodorder_section(pdf, P):
         if len(g["rows"]) > 60: pdf.para(f"… {len(g['rows']) - 60} more row(s) in production_order_draft.csv.", size=7)
     pdf.para("Method: " + P["method"], size=7.2)
 
+def risk_section(pdf, K):
+    """Per-address risk score (v26): transparent factor breakdown. Indicative lead, not evidence."""
+    pdf.h1(f"Address risk score – {K['score']} / 100 ({K['level']})")
+    pdf.box(K["lead"], color=AMBER, title="INDICATIVE LEAD – NOT EVIDENCE")
+    pdf.para(f"{code(K['chain'])} {K['address']}" + (" – on an official sanctions list: score pinned to 100 (factor total " + str(K['raw_score']) + ")" if K.get("pinned") else ""), size=8.5)
+    with pdf.tbl((52, 18, 18, pdf.epw - 88), size=7, lh=3.2) as t:
+        r = t.row(); [r.cell(x) for x in ("Factor", "Weight", "Points", "Evidence")]
+        for f in K["factors"]:
+            r = t.row(); r.cell(f["label"]); r.cell(str(f["weight"])); r.cell(str(f["points"])); r.cell("; ".join(f["evidence"])[:400])
+    for n in K.get("notes") or []: pdf.para("Note: " + n, size=7.4)
+    pdf.para("Method: " + K["method"], size=7.2)
+
 def loss_section(pdf, L):
     """Victim loss and fund-flow summary: totals, destinations, held balances, hop-by-hop table, method (statement-friendly wording)."""
     pdf.h1("Victim loss and fund-flow summary")
@@ -608,6 +620,17 @@ async def build(p):
             PO = await prodorder.draft(p, p.get("prodorder") if isinstance(p.get("prodorder"), dict) else {})
             if PO["groups"]: prodorder_section(pdf, PO)
         except Exception as ex: errs.append(f"production-order list: {type(ex).__name__}: {str(ex)[:120]}")
+    # ---------- per-address risk score (v26) ----------
+    RK = None
+    subj_ = (p.get("trace") or {}).get("root") or (p.get("case") or {}).get("query") or ""
+    if p.get("risk") is not False and subj_ and not is_tx(subj_):
+        try:
+            import risk, sys
+            ap = sys.modules.get("app") or sys.modules.get("__main__")
+            if ap and hasattr(ap, "lookup"):
+                RK = await asyncio.wait_for(risk.compute(subj_.split(":", 1)[-1] if subj_.startswith("tx:") else subj_, None, lambda a, c: ap.lookup(a, c), 2, 18), 24)
+                risk_section(pdf, RK)
+        except Exception as ex: errs.append(f"risk score: {type(ex).__name__}: {str(ex)[:120]}")
     # ---------- 2 graph ----------
     pdf.h1("2. Transaction graph")
     if png:
@@ -935,4 +958,4 @@ async def build(p):
                  "UK-registered cryptoasset firms can be checked on the FCA register. Firms outside the UK may need mutual legal assistance.", size=7.6)
     pdf.embed_file(bytes=data_bytes, basename="case_data.json", desc="ChainTrace canonical case data (hashed on the cover)", modification_date=datetime.fromtimestamp(gen, timezone.utc))
     out = bytes(pdf.output())
-    return out, {"case_sha256": data_sha, "png_sha256": png_sha, "pdf_sha256": hashlib.sha256(out).hexdigest(), "pages": pdf.page_no(), "notes": errs, "loss": L, "prodorder": PO}
+    return out, {"case_sha256": data_sha, "png_sha256": png_sha, "pdf_sha256": hashlib.sha256(out).hexdigest(), "pages": pdf.page_no(), "notes": errs, "loss": L, "prodorder": PO, "risk": RK}
