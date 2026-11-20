@@ -1,0 +1,13 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta name="referrer" content="no-referrer">
+<title>ChainTrace – shared snapshot (read-only)</title>
+<style>body{margin:0;background:#070a12;color:#dbe3f4;font:14px system-ui,sans-serif}header{padding:10px 14px;border-bottom:1px solid #1d2638;display:flex;gap:10px;align-items:center}
+#ban{display:none;margin:10px 14px;padding:10px 12px;border:1px solid rgba(246,201,69,.6);border-radius:10px;background:rgba(246,201,69,.08);font-size:13px;line-height:1.5;word-break:break-all}
+.mono{font-family:ui-monospace,monospace;font-size:11.5px}.dim{color:#8fa0bf}.ok{color:#7bd88f}.bad,.err{color:#ff8fa3}#msg{margin:30px 14px}
+main{display:grid;grid-template-columns:1fr 320px;gap:10px;padding:0 14px 14px}#g{height:62vh;border:1px solid #1d2638;border-radius:10px;background:#0a0f1c}
+#det{border:1px solid #1d2638;border-radius:10px;padding:10px;font-size:12.5px;word-break:break-all}table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:3px 5px;border-top:1px solid #1d2638;text-align:left}
+section{padding:0 14px 20px}@media(max-width:760px){main{grid-template-columns:1fr}#g{height:50vh}}a{color:#7fb2ff}</style></head>
+<body><header><b>ChainTrace</b><span class="dim">shared snapshot · read-only</span><span style="flex:1"></span><span class="dim" id="cnt"></span></header>
+<div id="ban"></div><div id="msg">Opening shared snapshot…</div>
+<main><div id="g"></div><div id="det" class="dim">Tap a node for details. This view cannot be edited and makes no blockchain lookups.</div></main>
+<section id="notes"></section><section><h3>Transfers</h3><table id="tbl"></table></section>
+<script src="/static/cytoscape.min.js"></script><script src="/static/share-view.js"></script></body></html>

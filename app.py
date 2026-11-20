@@ -31,6 +31,12 @@ async def guard(request: Request, call_next):
             ok = secrets.compare_digest(u, USER) & secrets.compare_digest(p, PASS)
         except Exception: ok = False
     if request.url.path == "/healthz": return await call_next(request)
+    if request.url.path in ("/share", "/static/share-view.js", "/static/cytoscape.min.js") and request.method == "GET": return await call_next(request)   # public read-only share viewer (the snapshot travels encrypted in the URL fragment)
+    if request.url.path == "/api/share/open" and request.method == "POST":
+        q = RL[(_ip(request), "share")]; now = _t.time()
+        while q and q[0] < now - 60: q.popleft()
+        if len(q) >= 20: return JSONResponse({"detail": "rate limit"}, 429, {"Retry-After": "60"})
+        q.append(now); return await call_next(request)
     if request.url.path == "/api/alerts/run":   # scheduler endpoint: bearer token only (ALERTS_TOKEN), never the site password
         tok = os.environ.get("ALERTS_TOKEN") or ""; got = h[7:].strip() if h.startswith("Bearer ") else ""
         q = RL[(_ip(request), "alerts")]; now = _t.time()
@@ -324,6 +330,28 @@ async def cctp_api(tx: str):
     import stable
     try: return {"query": tx.strip(), "matches": await asyncio.wait_for(stable.cctp_tx(tx.strip()), LOOKUP_TIMEOUT)}
     except asyncio.TimeoutError: raise HTTPException(504, "CCTP lookup timed out; retry")
+@app.post("/api/share")
+async def share_create(request: Request, ttl: str = "7d", notes: bool = False, labels_: bool = False, preview: bool = False):
+    """make a signed, expiring, read-only link for the snapshot in the body (case payload). Nothing is stored server-side."""
+    import share
+    try: p = await request.json()
+    except Exception: raise HTTPException(400, "body must be JSON")
+    lab = labels_ or request.query_params.get("labels") in ("1", "true")
+    try: r = share.make(p, ttl, notes, lab, preview)
+    except share.ShareError as ex: raise HTTPException(ex.code, str(ex))
+    if not preview: r["url"] = str(request.base_url).rstrip("/").replace("http://", "https://" if request.headers.get("x-forwarded-proto") == "https" else "http://") + "/share#t=" + r["token"]
+    return r
+@app.post("/api/share/open")
+async def share_open(request: Request):
+    """public: decrypt + verify a share token (read-only snapshot). Rate limited."""
+    import share
+    try: tok = (await request.json()).get("token")
+    except Exception: raise HTTPException(400, "body must be JSON")
+    try: return share.open_token(tok)
+    except share.ShareError as ex: raise HTTPException(ex.code, str(ex))
+@app.get("/share")
+async def share_page():
+    return FileResponse(os.path.join(H, "static", "share.html"), headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex"})
 @app.get("/api/btc/peel")
 async def btc_peel(q: str, max_hops: int = 12, min_conf: float = 0.6):
     """follow likely change outputs (peel chain) from a BTC tx or address; peeled payments are branches. Heuristic lead."""
