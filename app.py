@@ -255,6 +255,22 @@ async def victim_loss(request: Request):
     try: return await asyncio.wait_for(loss.compute(p, p["loss"]), LOOKUP_TIMEOUT + 10)
     except ValueError as ex: raise HTTPException(400, str(ex))
     except asyncio.TimeoutError: raise HTTPException(504, "loss calculation timed out")
+@app.post("/api/prodorder")
+async def prod_order(request: Request, format: str = "json"):
+    """production-order draft list: likely exchange deposit addresses in the browser's graph, per exchange (draft lead list, not evidence).
+    Body: {nodes[], edges[], case{labels}, opts:{check: bool (bounded live check of unlabelled end-points)}}"""
+    if int(request.headers.get("content-length") or 0) > 8 * 1024 * 1024: raise HTTPException(413, "payload too large (max 8 MB)")
+    try: p = await request.json()
+    except Exception: raise HTTPException(400, "body must be JSON")
+    if not isinstance(p, dict) or not isinstance(p.get("nodes"), list) or not isinstance(p.get("edges"), list): raise HTTPException(400, "expected {nodes[], edges[]}")
+    if len(p["nodes"]) > 3000 or len(p["edges"]) > 6000: raise HTTPException(413, "graph too large (max 3000 nodes / 6000 edges)")
+    import prodorder
+    o = p.get("opts") if isinstance(p.get("opts"), dict) else {}
+    o = {"check": bool(o.get("check")), "max_checks": max(1, min(10, int(o.get("max_checks") or 8))), "budget": 18}
+    try: r = await asyncio.wait_for(prodorder.draft(p, o), LOOKUP_TIMEOUT + 10)
+    except asyncio.TimeoutError: raise HTTPException(504, "production-order list timed out")
+    if format == "csv": return Response(prodorder.to_csv(r), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=production_order_draft.csv"})
+    return r
 @app.get("/api/btc/change")
 async def btc_change(tx: str, min_conf: float = 0.6):
     """change-address heuristics for one Bitcoin transaction (heuristic lead, not attribution)"""

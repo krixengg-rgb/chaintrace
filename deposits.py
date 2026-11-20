@@ -6,7 +6,8 @@ import json, math, os, re
 import labels
 D = os.path.join(os.path.dirname(__file__), "data")
 NATIVE = {"eth": "ETH", "sol": "SOL"}
-GAS = {"eth": 0.03, "sol": 0.05}            # tiny native top-up threshold
+GAS = {"eth": 0.03, "sol": 0.05, "tron": 30, "bsc": 0.005, "arb": 0.003, "base": 0.003, "op": 0.003, "polygon": 2}   # tiny native top-up threshold
+UNITS = {"btc": "BTC", "tron": "TRX", "bsc": "BNB", "arb": "ETH", "base": "ETH", "op": "ETH", "polygon": "POL", "ltc": "LTC", "doge": "DOGE", "bch": "BCH", "xrp": "XRP"}   # features() on other chains (production-order live check)
 FEATS = ["f_out_hub", "log_sweeps", "single_out", "log_in_senders", "gas_from_ex", "sweep_ratio", "low_balance", "in_gt_out"]
 # heuristic prior used if no trained model is present (hand-set, documented)
 PRIOR = {"bias": -4.0, "w": [3.0, 1.2, 1.5, 0.6, 1.0, 1.2, 0.8, 0.3]}
@@ -110,7 +111,7 @@ def features(chain, a, d, extra_hubs=None):
     ht = max(hubs, key=lambda t: sum(e.get("count", 1) for e in tgt[t]))
     hs = tgt[ht]; n_sw = sum(e.get("count", 1) for e in hs); n_out = sum(e.get("count", 1) for e in out)
     senders = {e["source"] for e in inc}
-    gas = any(e.get("unit") == NATIVE[chain] and (e.get("amount") or 0) <= GAS[chain] and exchange_any(chain, e["source"]) for e in inc)
+    nat = NATIVE.get(chain) or UNITS.get(chain); gas = chain in GAS and any(e.get("unit") == nat and (e.get("amount") or 0) <= GAS[chain] and exchange_any(chain, e["source"]) for e in inc)
     u_in = sum(e.get("usd") or 0 for e in inc); u_hub = sum(e.get("usd") or 0 for e in hs)
     bal = d.get("balance_usd")
     if bal is None:

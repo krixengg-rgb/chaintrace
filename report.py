@@ -293,6 +293,26 @@ async def timeline_section(pdf, TL, A, p, val, who, case_labels, errs):
     if len(R) > 600: pdf.para(f"(first 600 of {len(R)} rows shown)", size=7.2, color=GREY)
     pdf.para(f"Total of the priced rows: {gbp(tot)} ({n_} of {len(R)} rows priced). Totals add flows at every hop, so the same funds can be counted more than once; "
              "use the victim-loss section for the loss figure.", size=7.6)
+def prodorder_section(pdf, P):
+    """Production-order draft list (v24): likely exchange deposit addresses per exchange with the incoming transfers (lead list, not evidence)."""
+    pdf.h1("Production order draft list – likely exchange deposit addresses")
+    pdf.box(P["wording"], color=AMBER, title="DRAFT LEAD LIST – NOT EVIDENCE – NOT LEGAL ADVICE")
+    for g in P["groups"]:
+        c = g.get("contact") or {}
+        pdf.h2(f"{g['exchange']} – {g['addresses']} address(es), {len(g['rows'])} transfer row(s)" + (f", {gbp(g['gbp_then'])} on the day" if g.get("gbp_then") else "") + (" (leads only)" if g["lead_only"] else ""))
+        pdf.para(("Published law-enforcement route: " + " · ".join(x for x in (c.get("portal"), c.get("email")) if x) + f" (source: {c.get('source_url')}, checked {c.get('verified')})") if c
+                 else "Published law-enforcement route: not recorded – find the current route on the firm's own website.", size=7.6)
+        with pdf.tbl((40, 30, 30, 34, 26, 22, pdf.epw - 182), size=6.4, lh=3.0) as t:
+            r = t.row(); [r.cell(x) for x in ("Deposit address", "Type / confidence", "Transaction", "Time (UK / UTC)", "Amount", "GBP on the day", "Reason")]
+            for x in g["rows"][:60]:
+                r = t.row(); r.cell(f"{code(x['chain'])} " + wrap_hex(x["address"], 30), style=MONOS, link=addr_url(x["chain"], x["address"]))
+                r.cell(f"{x['type']}\n{int(x['confidence'] * 100)}% ({x['level']})", style=LEADF if x["lead"] else None)
+                r.cell(wrap_hex(x["txid"], 28) if x.get("txid") else (x.get("note") or "–"), style=MONOS if x.get("txid") else None, link=tx_url(x["chain"], x["txid"]) if x.get("txid") else None)
+                r.cell(t_both(x["time"]) if x.get("time") else "–"); r.cell(f"{num(x['amount'])} {x['asset']}" if x.get("amount") is not None else "–")
+                r.cell(gbp(x.get("gbp_then"))); r.cell(x["reason"][:220], style=LEADF if x["lead"] else None)
+        if len(g["rows"]) > 60: pdf.para(f"… {len(g['rows']) - 60} more row(s) in production_order_draft.csv.", size=7)
+    pdf.para("Method: " + P["method"], size=7.2)
+
 def loss_section(pdf, L):
     """Victim loss and fund-flow summary: totals, destinations, held balances, hop-by-hop table, method (statement-friendly wording)."""
     pdf.h1("Victim loss and fund-flow summary")
@@ -580,6 +600,14 @@ async def build(p):
         try: L = await LS.compute(p, p["loss"])
         except Exception as ex: errs.append(f"victim-loss summary: {type(ex).__name__}: {str(ex)[:120]}")
         if L: loss_section(pdf, L)
+    # ---------- production-order draft list (v24) ----------
+    PO = None
+    if p.get("prodorder") is not False:
+        try:
+            import prodorder
+            PO = await prodorder.draft(p, p.get("prodorder") if isinstance(p.get("prodorder"), dict) else {})
+            if PO["groups"]: prodorder_section(pdf, PO)
+        except Exception as ex: errs.append(f"production-order list: {type(ex).__name__}: {str(ex)[:120]}")
     # ---------- 2 graph ----------
     pdf.h1("2. Transaction graph")
     if png:
@@ -907,4 +935,4 @@ async def build(p):
                  "UK-registered cryptoasset firms can be checked on the FCA register. Firms outside the UK may need mutual legal assistance.", size=7.6)
     pdf.embed_file(bytes=data_bytes, basename="case_data.json", desc="ChainTrace canonical case data (hashed on the cover)", modification_date=datetime.fromtimestamp(gen, timezone.utc))
     out = bytes(pdf.output())
-    return out, {"case_sha256": data_sha, "png_sha256": png_sha, "pdf_sha256": hashlib.sha256(out).hexdigest(), "pages": pdf.page_no(), "notes": errs, "loss": L}
+    return out, {"case_sha256": data_sha, "png_sha256": png_sha, "pdf_sha256": hashlib.sha256(out).hexdigest(), "pages": pdf.page_no(), "notes": errs, "loss": L, "prodorder": PO}

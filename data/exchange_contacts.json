@@ -1,0 +1,8 @@
+{
+ "_about": "Law-enforcement request routes that the exchange itself publishes. Only entries checked on the exchange's own page are listed (verified = date checked). Anything else is left blank on purpose: find the current route on the firm's own website before use. Not legal advice.",
+ "entries": {
+  "binance": {"name": "Binance", "portal": "https://app.kodexglobal.com/binance/signup", "notes": "Government Law Enforcement Request System (LERS) via Kodex; agencies in China use https://app.kodexglobal.com/binance-cn/signup. Exigent requests: mark the case 'Exigent'.", "source_url": "https://www.binance.com/en/support/law-enforcement", "verified": "2026-11-20"},
+  "coinbase": {"name": "Coinbase", "portal": "https://app.kodexglobal.com/coinbase-intl/signup?source=legal-intl", "email": "subpoenas@coinbase.com", "notes": "Criminal subpoenas / official requests in criminal matters via the Kodex portal; other law-enforcement questions to the email.", "source_url": "https://www.coinbase.com/legal/eea", "source_url_2": "https://help.coinbase.com/en/coinbase/other-topics/legal-policies/who-do-i-contact-for-a-subpoena-request-or-dispute-or-to-send-a-legal-document", "verified": "2026-11-20"},
+  "kraken": {"name": "Kraken", "portal": "https://support.kraken.com/hc/forms/35862482750484", "notes": "Compliance / legal inquiry form on Kraken's support site.", "source_url": "https://support.kraken.com/articles/how-do-i-submit-a-legal-inquiry", "verified": "2026-11-20"}
+ }
+}

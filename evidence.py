@@ -177,6 +177,12 @@ def vasp_schedule(p):
 def amounts(d): return ", ".join(f"{R.num(v)} {u}" for u, v in sorted(d.items(), key=lambda kv: -kv[1])) or "–"
 
 # ---------------- draft request document (one structure -> TXT and DOCX) ----------------
+def _portal(ent):
+    try:
+        import prodorder; c = prodorder.contact_for(ent)
+    except Exception: c = None
+    if not c: return "[officer to insert: the firm's published law-enforcement request route or registered address]"
+    return " · ".join(x for x in (c.get("portal"), c.get("email")) if x) + f" (published by the firm: {c.get('source_url')}, checked {c.get('verified')}; confirm it is current before use)"
 def draft_blocks(v, le, case, gen):
     """list of (type, payload): h1/h2/p/box/bul/kv/tbl"""
     ent = v["entity"]; ph = lambda k, d: le.get(k) or f"[{d}]"
@@ -186,7 +192,7 @@ def draft_blocks(v, le, case, gen):
                  "served as it stands. The officer must review and complete it, choose the correct legal route, and serve it (or attach it to an application) through that route. "
                  "Take your own legal advice (force legal services / financial investigation unit / CPS) before use. " + NOT_OFFICIAL),
          ("h2", "1. Addressee"),
-         ("kv", [("To", f"{ent} – law-enforcement response / compliance team"), ("Address / portal", "[officer to insert: the firm's published law-enforcement request route or registered address]"),
+         ("kv", [("To", f"{ent} – law-enforcement response / compliance team"), ("Address / portal", _portal(ent)),
                  ("UK registration", "[officer to check the FCA register and state whether the firm is UK-registered: https://register.fca.org.uk/]")]),
          ("h2", "2. Requesting officer"),
          ("kv", [("Name", ph("officer_name", "officer name")), ("Rank / role", ph("officer_rank", "rank / role")), ("Collar / warrant no.", ph("officer_number", "collar / warrant number")),
@@ -355,6 +361,9 @@ async def build_pack(p):
         files.append((base + ".txt", blocks_to_txt(B).encode("utf-8")))
     files.append(("vasp_schedule.csv", schedule_csv(V)))
     if info.get("loss") and info["loss"].get("csv"): files.append(("victim_loss_summary.csv", info["loss"]["csv"].encode("utf-8")))
+    if info.get("prodorder") and info["prodorder"].get("groups"):
+        import prodorder
+        files.append(("production_order_draft.csv", prodorder.to_csv(info["prodorder"]).encode("utf-8")))
     import auditlog
     if any(isinstance(e, dict) for e in case.get("journal") or []): files.append(("case_notes.csv", auditlog.notes_csv(case.get("journal"))))
     if any(isinstance(e, dict) for e in case.get("audit") or []):
@@ -371,6 +380,6 @@ async def build_pack(p):
         for n, b in files:
             zi = zipfile.ZipInfo(f"ChainTrace-evidence-pack-{ref}/{n}", date_time=dt); zi.compress_type = zipfile.ZIP_DEFLATED; z.writestr(zi, b)
     out = zb.getvalue()
-    info = {k: v for k, v in info.items() if k != "loss"}
+    info = {k: v for k, v in info.items() if k not in ("loss", "prodorder")}
     return out, {**info, "zip_sha256": hashlib.sha256(out).hexdigest(), "vasps": [{"entity": v["entity"], "addresses": len(v["addresses"]), "lead_only": v["lead_only"]} for v in V],
                  "files": names, "ref": ref}
