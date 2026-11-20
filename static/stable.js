@@ -14,7 +14,7 @@ function card(j){const bl=j.blacklist||[];
  return `<div class="card glass stcard" id="stcard"><h3>💵 Stablecoins (USDT / USDC)</h3>
  <h4>Issuer blacklist / freeze status <span class="dim" style="font-weight:400">· read live from the token contracts</span></h4>
  ${bl.length?bl.map(b=>`<div class="bl" data-sym="${esc(b.symbol)}"><b>${esc(b.symbol)}</b><span class="dim">${esc(b.issuer)} · ${esc(CH[b.chain]?.n||b.chain)}</span><span style="flex:1"></span>
-  ${b.blacklisted===true?`<span class="pill bad">⛔ BLACKLISTED${b.frozen_balance!=null?' · '+n2(b.frozen_balance)+' frozen':''}</span>`:b.blacklisted===false?'<span class="pill ok">not blacklisted</span>':`<span class="pill unk" title="${esc(b.error||'')}">unknown</span>`}</div>
+  ${b.blacklisted===true?`<span class="pill bad">⛔ BLACKLISTED${b.frozen_balance!=null?' · '+n2(b.frozen_balance)+' frozen':' · frozen balance n/a'}</span>`:b.blacklisted===false?'<span class="pill ok">not blacklisted</span>':`<span class="pill unk" title="${esc(b.error||'')}">unknown</span>`}</div>
   <div class="dim" style="font-size:10.5px">${Object.entries(b.calls||{}).map(([k,v])=>esc(k)+'() = '+v).join(' · ')} on <a target="_blank" rel="noopener" href="${(CH[b.chain]?.ad||'')}${esc(b.token)}">${esc(short(b.token))}</a></div>`).join('')
   :`<div class="dim" style="font-size:12px">No issuer blacklist check for ${esc(CH[j.chain]?.n||j.chain)} (supported: Tether USDT on Ethereum + TRON, Circle USDC on Ethereum, Arbitrum, Base, Optimism, Polygon).</div>`}
  ${j.blacklist_error?`<div class="warn2">⚠ ${esc(j.blacklist_error)}</div>`:''}

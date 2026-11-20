@@ -62,7 +62,15 @@ async def balance_of(c, token, a, dec):
     try:
         if c == "tron":
             body = {"owner_address": "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb", "contract_address": token, "function_selector": "balanceOf(address)", "parameter": addrutil.tron_b58_to_hex(a)[2:].rjust(64, "0"), "visible": True}
-            r = await chains.client.post(chains.TRON_API[0] + "/wallet/triggerconstantcontract", json=body, timeout=10); res = r.json()["constant_result"][0]
+            res = None
+            for i in range(2):
+                for base in chains.TRON_API:
+                    try:
+                        r = await chains.client.post(base + "/wallet/triggerconstantcontract", json=body, timeout=10); r.raise_for_status(); res = r.json()["constant_result"][0]; break
+                    except Exception: continue
+                if res is not None: break
+                await asyncio.sleep(1.5)
+            if res is None: return None
         else:
             res = await chains.eth_rpc_any("eth_call", [{"to": token, "data": "0x70a08231" + a.lower().removeprefix("0x").rjust(64, "0")}, "latest"], 8, chain=c)
         return int(res, 16) / 10 ** dec
