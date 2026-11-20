@@ -6,7 +6,7 @@ const isS=u=>SU.has(String(u||'').replace('⇄','').toUpperCase());
 const css=document.createElement('style');css.textContent=`.stcard .bl{display:flex;gap:6px;align-items:center;font-size:12.5px;padding:4px 0;border-top:1px solid var(--line)}
 .stcard .pill{font-size:10.5px;padding:1px 7px;border-radius:9px;border:1px solid;white-space:nowrap}.stcard .pill.bad{border-color:#ff5c7a;color:#ffb3c1;background:rgba(255,92,122,.1)}.stcard .pill.ok{border-color:rgba(123,216,143,.6);color:#b8f0c4}.stcard .pill.unk{border-color:#888;color:#bbb}
 .stcard table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}.stcard td,.stcard th{padding:3px 4px;border-top:1px solid var(--line);text-align:left;vertical-align:top}.stcard th{color:var(--dim,#9aa);font-weight:600}
-.stcard .warn2{font-size:11.5px;color:#ffcf8a;margin-top:4px}.stcard h4{margin:10px 0 2px;font-size:12.5px}`;document.head.appendChild(css);
+.stcard .warn2{font-size:11.5px;color:#ffcf8a;margin-top:4px}.stbp{display:none}@media(max-width:600px){.stbl{display:none}.stbp{display:inline}.stbchk{margin:0!important;padding-left:2px!important;padding-right:2px!important;gap:1px!important}}.stcard h4{margin:10px 0 2px;font-size:12.5px}`;document.head.appendChild(css);
 cy.style().selector('.stbhide').style({display:'none'}).update();
 let LAST=null,PEND=null,ONLY=false;
 const n2=v=>(+v).toLocaleString(undefined,{maximumFractionDigits:2});
@@ -39,7 +39,7 @@ window.ctStable=async function(a){PEND=a;LAST=null;put(PH);
   if(typeof ctAudit==='function')try{ctAudit('stable.view',{address:a,blacklisted:(j.blacklist||[]).filter(b=>b.blacklisted).map(b=>b.symbol)})}catch(e){}}
  catch(e){PEND=null;const c=$('stcard');if(c)c.innerHTML=`<h3>💵 Stablecoins</h3><div class="warnbox">${esc(e.message)}</div>`}};
 // AutoTrace option
-const seg=$('amin')?.parentElement;if(seg&&!$('stbonly'))seg.insertAdjacentHTML('beforeend',` <label class="chk" title="AutoTrace follows only official USDT / USDC transfers (and bridge hops of them)"><input type="checkbox" id="stbonly"> 💵 stables</label>`);
+const seg=$('amin')?.parentElement;if(seg&&!$('stbonly'))seg.insertAdjacentHTML(innerWidth<600?'afterend':'beforeend',`<label class="chk stbchk" title="AutoTrace follows only official USDT / USDC transfers (and bridge hops of them)"><input type="checkbox" id="stbonly"> 💵<span class="stbl"> stables</span><span class="stbp"> USDT/USDC only</span></label>`);
 const nav=(performance.getEntriesByType('navigation')[0]||{}).name||location.href;const P=new URL(nav).searchParams;
 let auto=P.get('stable')==='1';if(P.get('stables')==='1'){const c=$('stbonly');if(c)c.checked=true}
 const _render=window.render;window.render=function(d){_render(d);try{if(ONLY)setTimeout(apply,50);if(d&&d.address&&!d.tx){const r=$('side').querySelector('.card .row')||$('side').querySelector('.card');
