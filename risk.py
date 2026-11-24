@@ -10,9 +10,10 @@ FACTORS = [  # key, label, weight (max points), what it measures
     ("scam", "Scam / abuse reports", 15, "Dataset scam / hack / darknet / ransomware labels and community reports (Chainabuse cache) on the address itself."),
     ("mixer_gambling", "Mixer / privacy / gambling exposure", 20, "Share of value to or from mixers, privacy pools and gambling services, direct counts in full, indirect (n hops) at half."),
     ("nokyc", "No-KYC swap / exchange exposure", 10, "Share of value to or from no-KYC instant swap services, direct in full, indirect at half."),
-    ("patterns", "Peel / structuring patterns", 10, "Bursts of similar-sized transfers, amounts just under round reporting thresholds, many fresh one-off recipients (peel-like spending)."),
+    ("patterns", "Peel / structuring patterns", 5, "Bursts of similar-sized transfers, amounts just under round reporting thresholds, many fresh one-off recipients (peel-like spending)."),
     ("age", "Address age", 5, "Newly active addresses score higher (first activity in the fetched history)."),
-    ("velocity", "Volume velocity", 10, "Pass-through behaviour: most incoming value leaves again quickly, and high value per active day."),
+    ("velocity", "Volume velocity", 5, "Pass-through behaviour: most incoming value leaves again quickly, and high value per active day."),
+    ("scam_pattern", "Scam-pattern flags (pig-butchering / fake recovery)", 10, "Heuristic detectors: repeated fee-like deposits from many payers, fan-in then consolidation to an exchange, smaller repeat payments after a large first payment, recovery-fee pattern after a prior loss."),
 ]
 W = {k: w for k, _, w, _ in FACTORS}
 LEVELS = [(75, "severe"), (50, "high"), (25, "medium"), (10, "low"), (0, "minimal")]
@@ -125,6 +126,9 @@ def score(d, X=None):
         f, ev = 0.0, [f"oldest fetched transfer {days:.0f} days ago, but older history exists (not fetched): age not scored"]
     put("age", f, ev, {"days": days})
     f, ev = velocity(focus, edges); put("velocity", f, ev or ["no pass-through or high-velocity pattern"])
+    import scampattern
+    sp = scampattern.analyse(d)
+    put("scam_pattern", sp["frac"], [f"{x['name']} ({x['strength']:.0%}): " + "; ".join(x["evidence"][:2]) for x in sp["flags"]] or ["no fee-deposit, fan-in, fee-after-loss or recovery-fee pattern in the fetched history"])
     raw = round(min(100.0, sum(x["points"] for x in F.values())))
     pinned = bool(sh)
     s = 100 if pinned else raw

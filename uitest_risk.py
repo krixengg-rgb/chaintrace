@@ -20,7 +20,7 @@ F = lambda j, k: next(f for f in j["factors"] if f["key"] == k)
 
 def engine():
     import risk
-    check("weights sum to 100 across 7 factors", sum(w for _, _, w, _ in risk.FACTORS) == 100 and len(risk.FACTORS) == 7)
+    check("weights sum to 100 across 8 factors (v31 adds scam-pattern flags)", sum(w for _, _, w, _ in risk.FACTORS) == 100 and len(risk.FACTORS) == 8)
     now = time.time(); A = "A"
     pas = [{"source": "S%d" % i, "target": A, "usd": 1000, "amount": 1, "unit": "ETH", "time": now - 86400 * 5 + i * 3600} for i in range(6)] + \
           [{"source": A, "target": "R%d" % i, "usd": 990, "amount": 0.99, "unit": "ETH", "time": now - 86400 * 5 + i * 3600 + 600} for i in range(6)]
@@ -64,7 +64,7 @@ async def ui():
             await pg.wait_for_function("window.CT_LAST_RISK&&document.querySelector('#rkcard table')", timeout=60000)
             txt = await pg.inner_text("#rkcard"); rows = await pg.evaluate("document.querySelectorAll('#rkcard tr[data-k]').length")
             check(f"ui {tag}: deep link &risk=1 shows score + banner", "Indicative lead, not evidence" in txt and (await pg.inner_text("#rknum")).strip().isdigit(), txt[:80])
-            check(f"ui {tag}: 7 factors with weights shown", rows == 7 and "Sanctions" in txt and "Address age" in txt and "Volume velocity" in txt, rows)
+            check(f"ui {tag}: 8 factors with weights shown", rows == 8 and "Sanctions" in txt and "Address age" in txt and "Volume velocity" in txt, rows)
             check(f"ui {tag}: Risk score button on the address card", await pg.query_selector(".rkbtn") is not None)
             await pg.evaluate("document.getElementById('rkcard').scrollIntoView()")
             if SHOTS: await pg.screenshot(path=SHOT(tag))

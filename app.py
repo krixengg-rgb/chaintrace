@@ -351,6 +351,20 @@ async def risk_api(q: str, chain: str = None, hops: int = 2):
     except HTTPException: raise
     except asyncio.TimeoutError: raise HTTPException(504, "risk scoring timed out; retry (lookups are cached)")
     except Exception as ex: raise HTTPException(502, f"upstream error: {type(ex).__name__}: {ex}")
+@app.get("/api/scampattern")
+async def scampattern_api(q: str, chain: str = None, chainabuse: bool = False):
+    """fake-recovery / pig-butchering pattern flags for one address + public scam reports with sources. Heuristic lead, not evidence.
+    chainabuse=1 makes one live Chainabuse call when CHAINABUSE_API_KEY is set (cached 7 days); otherwise only cached reports are used."""
+    import scampattern
+    try: d = await asyncio.wait_for(lookup(q.strip(), chain or None), LOOKUP_TIMEOUT)
+    except HTTPException: raise
+    except asyncio.TimeoutError: raise HTTPException(504, "lookup timed out; retry (results are cached)")
+    if d.get("kind") != "address": raise HTTPException(400, "give an address")
+    ca = None
+    if d.get("chain") in chains.ADDR:
+        try: ca = await screen.chainabuse(d["chain"], d["address"], call=chainabuse)
+        except Exception: ca = None
+    return scampattern.analyse(d, ca)
 @app.get("/api/stable")
 async def stable_api(q: str, chain: str = None):
     """USDT / USDC view of an address: issuer blacklist / freeze status (read on-chain) + stablecoin flows per token."""
