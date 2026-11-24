@@ -159,16 +159,16 @@ async def leads(h, lookup, chain=None, budget=40):
     usd_in = leg["amount"] * p
     wallets = [(k, v) for k, v in swappers().items() if k[0] in ("eth", "bsc") and "deposit" not in v["name"].lower()]
     if how: wallets.sort(key=lambda kv: kv[1]["service"] != how["service"])   # same service first
-    sem = asyncio.Semaphore(4); pays = []; checked = []
+    sems = {"eth": asyncio.Semaphore(1), "bsc": asyncio.Semaphore(2)}; pays = []; checked = []   # Blockscout's legacy API rate-limits shared hosts: scan Ethereum wallets one at a time
     async def one(k, v):
-        async with sem:
-            if time.time() - t_start > budget: return
+        async with sems[k[0]]:
+            if time.time() - t_start > budget: notes.append(f"{v['service']} {k[0]} {k[1][:10]}: not checked (time budget reached; retry, results are cached)"); return
             try:
                 ps = await asyncio.wait_for((_eth_payouts if k[0] == "eth" else _bsc_payouts)(k[1], t0 - pre, t0 + WIN), 20)
                 checked.append({"chain": k[0], "wallet": k[1], "service": v["service"], "payouts": len(ps)})
                 for q_ in ps: q_.update(service=v["service"], wallet=k[1], wallet_name=v["name"], src=v["src"], url=v["url"])
                 pays.extend(ps)
-            except Exception as e: notes.append(f"{v['service']} {k[0]} {k[1][:10]}: payout scan failed ({type(e).__name__})")
+            except Exception as e: notes.append(f"{v['service']} {k[0]} {k[1][:10]}: payout scan failed ({type(e).__name__}{': ' + str(e)[:60] if str(e) else ''})")
     await asyncio.gather(*[one(k, v) for k, v in wallets])
     cands = []
     for q_ in pays:
