@@ -60,6 +60,11 @@ MAX_RUNNING_TRACES = 2
 LOOKUP_TIMEOUT = float(os.environ.get("CHAINTRACE_LOOKUP_TIMEOUT", "25"))   # stay under proxy timeouts
 H = os.path.dirname(__file__)
 def finish(d):
+    if d.get("tx") and d.get("time"):   # transaction view: give each transfer the block time (reports, timeline and statements need it per flow)
+        ts = chains.ts_of(d["time"])
+        if ts:
+            for e in d.get("edges") or []:
+                if not e.get("time") and (not e.get("tx") or str(e.get("tx")).lower() == str(d["tx"]).lower()): e["time"] = ts
     by = {n["id"]: n for n in d["nodes"]}
     focus = d.get("address")
     if focus and focus in by:
@@ -451,6 +456,23 @@ async def evidence_pack(request: Request):
         "X-Pack-SHA256": info["zip_sha256"], "X-Report-SHA256": info["pdf_sha256"], "X-Case-SHA256": info["case_sha256"], "X-Report-Pages": str(info["pages"]),
         "X-Pack-VASPs": _json.dumps(info["vasps"], ensure_ascii=True)[:1800],
         "Access-Control-Expose-Headers": "X-Pack-SHA256, X-Report-SHA256, X-Case-SHA256, X-Report-Pages, X-Pack-VASPs"})
+@app.post("/api/statement")
+async def statement_api(request: Request, fmt: str = "zip"):
+    """DRAFT investigator witness statement (generic layout, not the official MG11) as DOCX, PDF, or a zip with both + the evidence pack
+    whose files it lists as exhibits (SHA-256 each). Same payload as /api/evidence-pack, plus meta.statement {name, role, force, age, experience,
+    exhibit_prefix, date, tool_url}. Every page is marked DRAFT, CHECK AND AMEND BEFORE SIGNING."""
+    if fmt not in ("zip", "docx", "pdf"): raise HTTPException(400, "fmt must be zip, docx or pdf")
+    if int(request.headers.get("content-length") or 0) > 20 * 1024 * 1024: raise HTTPException(413, "case payload too large (max 20 MB)")
+    try: p = await request.json()
+    except Exception: raise HTTPException(400, "body must be JSON")
+    if not isinstance(p, dict) or not isinstance(p.get("nodes"), list) or not isinstance(p.get("edges"), list): raise HTTPException(400, "expected {case, nodes[], edges[], ...}")
+    if len(p["nodes"]) > 3000 or len(p["edges"]) > 6000: raise HTTPException(413, "graph too large (max 3000 nodes / 6000 edges)")
+    import statement, hashlib as _h
+    async with _REPORT_SEM:
+        try: b, name, mt, info = await asyncio.wait_for(statement.build(p, fmt), LOOKUP_TIMEOUT + 40)
+        except asyncio.TimeoutError: raise HTTPException(504, "statement generation timed out")
+    return Response(b, media_type=mt, headers={"Content-Disposition": f'attachment; filename="{name}"', "X-Pack-SHA256": info["pack_sha256"],
+        "X-Statement-SHA256": _h.sha256(b).hexdigest(), "X-Exhibits": str(info["exhibits"]), "Access-Control-Expose-Headers": "X-Pack-SHA256, X-Statement-SHA256, X-Exhibits"})
 # ---------------- screening: sanctions lists (hard flag) + community reports (unverified leads) ----------------
 SCREEN_MAX = 500
 def _screen_one(raw, chain=None):
