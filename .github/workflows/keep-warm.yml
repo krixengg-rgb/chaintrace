@@ -1,0 +1,25 @@
+# ChainTrace keep-warm (optional, OFF until you set the repository variable KEEPWARM_URL, e.g. https://chaintrace-d4fv.onrender.com).
+# Pings the unauthenticated /healthz every 14 minutes during UK daytime (07:00-22:59 Europe/London) so the Render free instance
+# (which sleeps after 15 minutes without traffic) is usually awake when you open it. No secrets are used or needed.
+# Render free web services share 750 instance hours per workspace per month: 16 h/day x 31 days = 496 h for this service alone.
+# Do not combine with another 24/7 pinger (e.g. the watch-alerts workflow every 20 min = ~744 h/month) or the hours run out.
+# GitHub disables scheduled workflows in repositories with no activity for 60 days.
+name: keep-warm
+on:
+  schedule:
+    - cron: "*/14 5-22 * * *"   # UTC; the step below keeps only 07:00-22:59 UK time (GMT and BST)
+  workflow_dispatch: {}
+permissions: {}
+jobs:
+  ping:
+    if: ${{ vars.KEEPWARM_URL != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping /healthz during UK daytime
+        env:
+          URL: ${{ vars.KEEPWARM_URL }}
+        run: |
+          h=$(TZ=Europe/London date +%H)
+          if [ "$h" -lt 7 ] || [ "$h" -gt 22 ]; then echo "outside UK daytime ($h:xx): skip"; exit 0; fi
+          curl -sS -m 120 -o /dev/null -w "healthz %{http_code} in %{time_total}s\n" "${URL%/}/healthz"

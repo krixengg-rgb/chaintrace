@@ -1,0 +1,11 @@
+<!doctype html>
+<!-- ChainTrace "waking up" page. Host it anywhere static (e.g. GitHub Pages) and bookmark it instead of the Render URL.
+     It polls the app's unauthenticated /healthz (no-cors: only "did it answer" is used, no data is read) and opens the app when it answers.
+     Set the app URL with ?app=https://your-service.onrender.com (default below). -->
+<html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ChainTrace – waking up</title>
+<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#070a12;color:#cfd8ff;font:15px system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.c{text-align:center;max-width:360px;padding:20px}.t{font-size:24px;font-weight:800}.m{color:#8f9bbd;font-size:13px;margin-top:10px}.b{height:4px;background:#1c2340;border-radius:2px;margin-top:16px;overflow:hidden}.b i{display:block;height:100%;width:30%;background:#6c7bff;animation:s 1.2s infinite ease-in-out}@keyframes s{0%{margin-left:-30%}100%{margin-left:100%}}a{color:#8fb8ff}</style></head>
+<body><div class="c"><div class="t">⛓ ChainTrace</div><div class="m" id="m">Waking the server up. Free-tier instances sleep after 15 minutes idle; the first start usually takes 30–60 seconds.</div><div class="b"><i></i></div><div class="m"><a id="go" href="#">Open now</a></div></div>
+<script>const app=(new URLSearchParams(location.search).get('app')||'https://chaintrace-d4fv.onrender.com').replace(/\/$/,'');document.getElementById('go').href=app+'/';
+const t0=Date.now();async function poll(){try{await fetch(app+'/healthz',{mode:'no-cors',cache:'no-store'});document.getElementById('m').textContent='Awake after '+Math.round((Date.now()-t0)/1000)+' s. Opening…';location.href=app+'/';}
+catch(e){document.getElementById('m').textContent='Still waking up ('+Math.round((Date.now()-t0)/1000)+' s)…';setTimeout(poll,3000)}}poll();</script></body></html>

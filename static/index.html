@@ -2,7 +2,6 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#070a12"><title>ChainTrace · on-chain fund tracing</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='9' cy='16' r='6' fill='none' stroke='%237c5cff' stroke-width='3'/%3E%3Ccircle cx='23' cy='16' r='6' fill='none' stroke='%2322d3ee' stroke-width='3'/%3E%3C/svg%3E">
-<script src="/static/cytoscape.min.js"></script>
 <style>
 :root{--bg:#070a12;--panel:rgba(20,26,42,.62);--panel2:rgba(28,36,58,.55);--line:rgba(140,160,210,.14);--txt:#e6ebf5;--mut:#8a95ad;--acc:#7c5cff;--acc2:#22d3ee;
 --btc:#f7931a;--eth:#8c9eff;--sol:#14f195;--tron:#ff425a;--xrp:#00aae4;--ltc:#9fb6ea;--doge:#d6b84a;--bch:#0ac18e;--red:#ff4d6d;--org:#ff9f43;--yel:#f6c945;--grn:#2ee59d;--blu:#4c8dff;
@@ -101,7 +100,12 @@ textarea:focus,.lblrow input:focus{border-color:rgba(124,92,255,.6)}
  aside{width:auto;overflow:visible}
  .legend{display:none}
 }
-</style></head><body>
+</style></head><body><div id="ctboot" style="position:fixed;inset:0;z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:#070a12;color:#cfd8ff;font:14px system-ui,-apple-system,Segoe UI,Roboto,sans-serif;transition:opacity .25s"><div style="font-size:22px;font-weight:800;letter-spacing:.02em">⛓ ChainTrace</div><div id="ctbootmsg" style="color:#8f9bbd;font-size:12.5px;text-align:center;max-width:320px">Loading the app…</div></div>
+<script>(function(){var b=document.getElementById('ctboot'),m=document.getElementById('ctbootmsg'),t0=Date.now(),done=false;
+function hide(){if(done)return;done=true;b.style.opacity='0';b.style.pointerEvents='none';setTimeout(function(){b.remove()},300)}
+function poll(){fetch('/healthz',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){window.CT_HEALTH=j;if(!j.warm&&!done)m.textContent='Server waking up: loading labels and the exchange-deposit store ('+Math.round((Date.now()-t0)/1000)+' s)…';if(!j.warm&&Date.now()-t0<90000)setTimeout(poll,1500)}).catch(function(){if(!done)m.textContent='Waiting for the server…';setTimeout(poll,2000)})}
+poll();window.addEventListener('load',hide);setTimeout(function(){if(!done)m.textContent='Still loading scripts… (slow connection or the free-tier server is busy)'},6000)})();</script>
+
 <header>
  <button class="btn ico" id="casesbtn" title="Cases" onclick="toggleCases()">☰</button>
  <div class="brand"><i>⛓</i>ChainTrace <small>BTC · ETH · BSC · ARB · BASE · POL · OP · SOL · TRON · XRP · LTC · DOGE · BCH fund tracing</small></div>
@@ -150,7 +154,7 @@ textarea:focus,.lblrow input:focus{border-color:rgba(124,92,255,.6)}
  <input type="file" id="impfile" accept=".json,application/json" multiple style="display:none" onchange="importCases(this.files);this.value=''">
  <div class="dim" style="font-size:12px">Stored in this browser (IndexedDB). Export cases to keep a copy or move them to another device.</div>
  <div id="caselist"></div></div>
-<script>
+<script src="/static/cytoscape.min.js"></script><script>
 window.CT_URL0=location.search;   // deep-link params before share() rewrites the URL
 // ---------- constants ----------
 const CAT={sanctioned:['#ff4d6d','⊘','Sanctioned'],terrorism:['#ff2e63','☠','Terrorism'],darknet:['#e0115f','☠','Darknet'],ransomware:['#e0115f','🔒','Ransomware'],

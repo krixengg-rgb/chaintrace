@@ -24,3 +24,4 @@ data/alerts/
 data/watch*
 .alerts-state/
 sample_report*
+static/b/

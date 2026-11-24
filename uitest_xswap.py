@@ -107,7 +107,9 @@ async def ui():
             await pg.wait_for_timeout(1500)
             n = await pg.evaluate(f"cy.edges().filter(e=>e.data('xchain')&&!e.data('heur')).length")
             check(f"ui {tag}: deterministic swap drawn as a dashed cross-chain edge to the ETH recipient", n >= 1 and await pg.evaluate(f"cy.nodes().some(x=>x.id().toLowerCase()==='{CF_DEST}')"), n)
-            check(f"ui {tag}: '🔀 Swap hops' button on the tx card", await pg.query_selector(".xsbtn") is not None)
+            try: await pg.wait_for_selector(".xsbtn", timeout=15000); hasb = True   # the tx card re-renders once if the server was still warming up
+            except Exception: hasb = False
+            check(f"ui {tag}: '🔀 Swap hops' button on the tx card", hasb)
             if tag == "desktop":
                 await pg.evaluate("cy.fit(undefined,60);document.getElementById('xscard').scrollIntoView()")
                 if SHOTS: await pg.screenshot(path=SHOT("chainflip_desktop"))

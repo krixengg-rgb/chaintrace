@@ -96,18 +96,26 @@ def finish(d):
     return d
 _WARM = {}
 _BOOT = _t.time()
-@app.on_event("startup")
-async def _warm_up():
-    """off the request path: build the inferred-label store and touch the label DB in worker threads, fetch prices"""
+def _start_warm():
+    """build the inferred-label store and touch the label DB in worker threads, fetch prices (idempotent)"""
+    if _WARM: return
     _WARM["dep"] = asyncio.create_task(asyncio.to_thread(deposits.ensure_store))
     _WARM["lbl"] = asyncio.create_task(asyncio.to_thread(lambda: labels.label("eth", "0x28C6c06298d514Db089934071355E5743bf21d60")))
     asyncio.create_task(chains.ensure_prices())
+@app.on_event("startup")
+async def _warm_up():
+    """off the request path and (v34) a few seconds after boot, so on a 0.1-CPU free instance the first page and its bundle are served
+    before the label / deposit stores load; a lookup arriving earlier starts the warm-up at once (_warm_wait)."""
+    async def later():
+        await asyncio.sleep(float(os.environ.get("CHAINTRACE_WARM_DELAY", "3"))); _start_warm()
+    asyncio.create_task(later())
     async def _sanc_refresh():   # stale (>24h) sanctions list: rebuild from the official files in a nice'd subprocess, after the warm-up settles
         await asyncio.sleep(int(os.environ.get("CHAINTRACE_SANCTIONS_DELAY", "90")))
         await screen.refresh_if_stale()
     if os.environ.get("CHAINTRACE_SANCTIONS_REFRESH", "1") != "0": asyncio.create_task(_sanc_refresh())
 async def _warm_wait(cap=1.0):
     """give a cold-start warm-up at most ~1s; never hold a lookup hostage to the store build (soft deadline is 4s)"""
+    _start_warm()
     pend = [t for t in _WARM.values() if not t.done()]
     if pend:
         try: await asyncio.wait(pend, timeout=cap)
@@ -644,7 +652,10 @@ async def alerts_seal(request: Request):
     except ValueError as e: raise HTTPException(400, str(e))
     return {"value": v, "items": len(wl["items"]), "chars": len(v)}
 @app.get("/healthz")
-def healthz(): return {"ok": True, "labels_db": os.path.exists(labels.LDB)}
+def healthz():
+    """lightweight liveness + warm-up state (no DB queries, no auth): used by Render's health check, the in-page splash and the keep-warm ping"""
+    w = bool(_WARM) and all(t.done() for t in _WARM.values())
+    return JSONResponse({"ok": True, "labels_db": os.path.exists(labels.LDB), "warm": w, "up_s": round(_t.time() - _BOOT, 1)}, headers={"Cache-Control": "no-store"})
 @app.get("/api/cache")
 def cache_stats(): return {**chains.STATS, "rows": chains.DB.execute("select count(*) from cache").fetchone()[0]}
 @app.get("/api/labels")
@@ -655,9 +666,25 @@ def lbl():
             "sources": [dict(zip(("id","description","url","licence","included","rows"), r)) for r in db.execute("select * from sources")]}
 def _old_lbl(): return {"ofac_counts": {k: len(v) for k, v in labels.OFAC.items()}, "mixers": len(labels.MIXERS_ETH),
                    "exchanges": {k: len(v) for k, v in labels.EXCH.items()}}
+import assets   # v34: bundled + minified + pre-compressed front end, content-hashed for long caching
+@app.get("/static/b/{name}")
+def bundled(name: str, request: Request):
+    a = assets.ASSETS.get(name)
+    if not a or name == "index.html": raise HTTPException(404, "not found")
+    if request.headers.get("if-none-match") == a["etag"]: return Response(status_code=304, headers={"ETag": a["etag"], "Cache-Control": "public, max-age=31536000, immutable"})
+    return assets.respond(a, request.headers.get("accept-encoding", ""), "public, max-age=31536000, immutable")
+@app.middleware("http")
+async def static_cache(request: Request, call_next):
+    r = await call_next(request)
+    if request.url.path.startswith("/static/") and not request.url.path.startswith("/static/b/") and "cache-control" not in r.headers:
+        r.headers["Cache-Control"] = "no-cache"   # un-hashed files: always revalidate (cheap 304 via ETag) so a deploy is never served stale
+    return r
 app.mount("/static", StaticFiles(directory=os.path.join(H, "static")), name="static")
 @app.get("/")
-def index(): return FileResponse(os.path.join(H, "static", "index.html"))
+def index(request: Request):
+    a = assets.INDEX
+    if request.headers.get("if-none-match") == a["etag"]: return Response(status_code=304, headers={"ETag": a["etag"], "Cache-Control": "no-cache"})
+    return assets.respond(a, request.headers.get("accept-encoding", ""), "no-cache")
 
 if __name__ == "__main__":
     import uvicorn
