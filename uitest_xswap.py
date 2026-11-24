@@ -51,6 +51,9 @@ def api():
     check("api: /api/xswap Chainflip match is deterministic, a swap, with a cross-chain graph edge", d and d[0]["swap"] and d[0]["graph"]["edges"][0]["xchain"] and d[0]["graph"]["edges"][0]["method"] == "deterministic", j.get("detail") or [m["bridge"] for m in j.get("deterministic", [])])
     time.sleep(3)
     j = cl.get(U + "/api/xswap", params={"tx": FF_IN}).json(); h = j.get("heuristic") or {}
+    if any("timed out" in str(n) for n in h.get("notes") or []):   # cold host: the card says 'retry (results are cached)' - do what a user would
+        print("note: first instant-swapper search timed out (cold host); retrying once", flush=True); time.sleep(5)
+        j = cl.get(U + "/api/xswap", params={"tx": FF_IN}).json(); h = j.get("heuristic") or {}
     cs = h.get("candidates") or []; sw = h.get("swapper") or {}
     check("api: FixedFloat input recognised (deposit address swept to the labelled FixedFloat wallet)", sw.get("service") == "FixedFloat" and sw.get("kind") == "sweep" and sw.get("wallet", "").lower() == FF_WALLET and sw.get("url", "").startswith("http"), sw)
     check("api: instant-swapper payouts returned as heuristic leads with value/time limits and confidence <= 60%",
