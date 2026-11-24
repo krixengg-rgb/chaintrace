@@ -34,7 +34,9 @@ async def direct():
         t = {x["asset"]: x for x in r["totals"]}
         check(f"binance {m}: total lost 195,469.85 ETH (167,464.25 + 28,005.60)", abs(t["ETH"]["amount"] - 195469.85) < 1e-6, t["ETH"]["amount"])
         held = {d["id"]: d for d in r["held"]}
-        check(f"binance {m}: 195,460 ETH attributed to the ETH stash and still held", STASH in held and abs(held[STASH]["amount"] - 195460) < 1e-6, {k[:10]: v["amount"] for k, v in held.items()})
+        # the stash was emptied in 2026 (live balance ~0.0187 ETH): 'still held' is capped at the live balance, the rest is 'untraced' at the stash
+        at = sum(d_["amount"] for d_ in r["destinations"] if d_["id"] == STASH and d_["unit"] == "ETH" and d_["cat"] in ("held", "untraced"))
+        check(f"binance {m}: 195,460 ETH attributed to the ETH stash; 'still held' capped at its live balance", abs(at - 195460) < 1e-6 and STASH in held and held[STASH]["amount"] <= (held[STASH].get("balance") or 0) + 1e-9, (at, {k[:10]: v["amount"] for k, v in held.items()}))
         check(f"binance {m}: reconciles (difference 0)", all(abs(x["difference"]) < 1e-6 for x in r["reconciliation"]), r["reconciliation"])
         check(f"binance {m}: method stated", r["method"] == m and r["method_name"] and m.upper()[:4] in (r["method_name"].upper() + "PROPORTIONAL"), r["method_name"])
     check("binance: USDT 500M from the hub is NOT counted as victim funds (no USDT pool from the victims)", not any(h["asset"] == "USDT" for h in r["hops"]))
