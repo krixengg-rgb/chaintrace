@@ -71,7 +71,53 @@ BS = "https://eth.blockscout.com/api"
 async def _eth_block(ts):
     d = await chains.get(f"{BS}?module=block&action=getblocknobytime&timestamp={int(ts)}&closest=after", ttl=chains.LONG if ts < time.time() - 600 else 60)
     return int((d.get("result") or {}).get("blockNumber"))
+BS2 = "https://eth.blockscout.com/api/v2"
+def _iso(t):
+    try: return int(datetime.fromisoformat(str(t).replace("Z", "+00:00")).timestamp())
+    except Exception: return None
+async def _eth_payouts_v2(w, t0, t1):
+    """fallback when Blockscout's legacy (etherscan-style) API refuses a shared host: the v2 REST API (outgoing only, filter=from).
+    v2 pages newest-first with a (block_number, index) cursor, so the window's block range (from the public RPC, 12 s slots, padded)
+    is cut into segments that are paged in parallel, each from its top block down to its bottom."""
+    h = int(await chains.rpc(chains.ETH_RPC, "eth_blockNumber", [], ttl=30), 16)
+    hb = await chains.rpc(chains.ETH_RPC, "eth_getBlockByNumber", [hex(h), False], ttl=30); ht = int(hb["timestamp"], 16)
+    b1 = min(h, int(h - (ht - t1) / 12.0) + 300); b0 = max(1, int(h - (ht - t0) / 12.0) - 300)
+    nseg = 6; step = max(1, (b1 - b0) // nseg + 1)
+    segs = [(b0 + i * step, min(b1, b0 + (i + 1) * step - 1)) for i in range(nseg) if b0 + i * step <= b1]
+    out = {}
+    async def seg(kind, lo, hi):
+        prm = {"filter": "from", "block_number": hi, "index": 0}
+        for _ in range(6):
+            q = "&".join(f"{k}={v}" for k, v in prm.items())
+            d = await chains.get(f"{BS2}/addresses/{w}/{kind}?{q}", ttl=chains.LONG if t1 < time.time() - 3600 else 120)
+            its = (d or {}).get("items") or []; stop = False
+            for x in its:
+                if int(x.get("block_number") or 0) < lo: stop = True; continue
+                t = _iso(x.get("timestamp"))
+                if t is None or t < t0 or t > t1: continue
+                if kind == "transactions":
+                    if (x.get("from") or {}).get("hash", "").lower() != w or x.get("status") not in (None, "ok"): continue
+                    v = int(x.get("value") or 0) / 1e18
+                    if v > 0: out[(x["hash"], "ETH", "")] = {"chain": "eth", "tx": x["hash"], "to": ((x.get("to") or {}).get("hash") or "").lower(), "amount": v, "unit": "ETH", "time": t}
+                else:
+                    tk = x.get("token") or {}; tot = x.get("total") or {}
+                    try: v = int(tot.get("value")) / 10 ** int(tot.get("decimals") or tk.get("decimals") or 18)
+                    except Exception: continue
+                    txh = x.get("transaction_hash") or x.get("tx_hash"); to = ((x.get("to") or {}).get("hash") or "").lower()
+                    out[(txh, to, str(x.get("log_index")))] = {"chain": "eth", "tx": txh, "to": to, "amount": v, "unit": (tk.get("symbol") or "?").upper(), "time": t,
+                                                              "token": (tk.get("address_hash") or tk.get("address") or "").lower()}
+            nx = (d or {}).get("next_page_params")
+            if stop or not nx or not its: break
+            prm = {k: v for k, v in nx.items() if v is not None}
+    await asyncio.gather(*[seg(k, lo, hi) for k in ("transactions", "token-transfers") for lo, hi in segs])
+    return list(out.values())
+LEGACY_DEAD = {"t": 0}
 async def _eth_payouts(w, t0, t1):
+    if time.time() - LEGACY_DEAD["t"] > 600:
+        try: return await asyncio.wait_for(_eth_payouts_legacy(w, t0, t1), 10)
+        except Exception: LEGACY_DEAD["t"] = time.time()   # rate-limited / refused on this host: use v2 for the next 10 minutes
+    return await _eth_payouts_v2(w, t0, t1)
+async def _eth_payouts_legacy(w, t0, t1):
     b0 = await _eth_block(t0); b1 = await _eth_block(min(t1, time.time() - 30)) if t1 < time.time() - 30 else 99999999
     out = []
     for act in ("txlist", "tokentx"):
@@ -164,7 +210,7 @@ async def leads(h, lookup, chain=None, budget=40):
         async with sems[k[0]]:
             if time.time() - t_start > budget: notes.append(f"{v['service']} {k[0]} {k[1][:10]}: not checked (time budget reached; retry, results are cached)"); return
             try:
-                ps = await asyncio.wait_for((_eth_payouts if k[0] == "eth" else _bsc_payouts)(k[1], t0 - pre, t0 + WIN), 20)
+                ps = await asyncio.wait_for((_eth_payouts if k[0] == "eth" else _bsc_payouts)(k[1], t0 - pre, t0 + WIN), 28)
                 checked.append({"chain": k[0], "wallet": k[1], "service": v["service"], "payouts": len(ps)})
                 for q_ in ps: q_.update(service=v["service"], wallet=k[1], wallet_name=v["name"], src=v["src"], url=v["url"])
                 pays.extend(ps)
