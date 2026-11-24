@@ -1,8 +1,8 @@
 # First-load performance on the Render free plan (v34)
 
 ## What changed
-- **One app bundle instead of 25 script files.** At start-up `assets.py` joins the app's own scripts (in page order) into
-  `/static/b/app.<hash>.js`, minifies it with `rjsmin`, and serves brotli or gzip. Cytoscape is served as `/static/b/cytoscape.<hash>.js`.
+- **One app bundle instead of 25 script files (not minified, see below).** At start-up `assets.py` joins the app's own scripts (in page order) into
+  `/static/b/app.<hash>.js`, and serves it brotli or gzip compressed. (Minifying with `rjsmin` is off: it mangled spaces inside JavaScript template literals; it only saved ~4% before compression.) Cytoscape is served as `/static/b/cytoscape.<hash>.js`.
   `render.yaml` runs `python3 assets.py` in the build step, so the best compression (brotli 11 / gzip 9) is done once at deploy
   time and a cold start only reads the files (`static/b/`, gitignored).
 - **Cache headers.** Hashed bundles: `Cache-Control: public, max-age=31536000, immutable` (a new deploy changes the hash).

@@ -1,5 +1,5 @@
 """ChainTrace v34 front-end delivery for slow free-tier hosts.
-At import (a few ms): read static/index.html, join the app's own scripts (in page order) into one bundle, minify it with rjsmin
+At import (a few ms): read static/index.html, join the app's own scripts (in page order) into one bundle (minify with rjsmin only if CHAINTRACE_MINIFY=1)
 when installed, pre-compress index, bundle and the vendored cytoscape with brotli (if installed) and gzip, and name the bundles by
 content hash so they can be cached for a year ('immutable'); index.html itself is always revalidated (no-cache).
 CHAINTRACE_BUNDLE=0 serves the original files (debugging). Files under /static keep working unchanged (share viewer, tests)."""
@@ -40,7 +40,9 @@ def build():
     vendor = [n for n in names if n == "cytoscape.min.js"]; app = [n for n in names if n not in vendor]
     src = "\n;\n".join(f"/* {n} */\n" + open(os.path.join(S, n), encoding="utf-8").read() for n in app)
     raw_len = len(src.encode())
-    js = rjsmin.jsmin(src) if rjsmin else src
+    # Minifying is OFF by default: rjsmin does not understand template literals and dropped spaces after ${...}
+    # ("3 error(s)" became "3error(s)"). Bundling + brotli gets nearly all of the gain (minify saved ~4% raw).
+    js = rjsmin.jsmin(src) if (rjsmin and os.environ.get("CHAINTRACE_MINIFY") == "1") else src
     b = _pack("app", js.encode(), "application/javascript; charset=utf-8"); app_name = f"app.{b['hash']}.js"; ASSETS[app_name] = ASSETS.pop("app")
     out = html
     first = True
@@ -55,7 +57,7 @@ def build():
     out = TAG.sub(rep, out)
     INDEX.update(_pack("index.html", out.encode(), "text/html; charset=utf-8"))
     STATS.update({"scripts_bundled": len(app), "bundle_raw": raw_len, "bundle_min": len(js.encode()), "bundle_gz": len(ASSETS[app_name]["gz"]),
-                  "bundle_br": len(ASSETS[app_name]["br"] or b""), "minifier": "rjsmin" if rjsmin else None, "brotli": bool(brotli), "app": app_name})
+                  "bundle_br": len(ASSETS[app_name]["br"] or b""), "minifier": "rjsmin" if (rjsmin and os.environ.get("CHAINTRACE_MINIFY") == "1") else None, "brotli": bool(brotli), "app": app_name})
 def respond(a, accept, cache):
     from fastapi.responses import Response
     enc = None; body = a["raw"]
