@@ -80,6 +80,10 @@ def finish(d):
     if c in ("btc", "eth", "sol", "tron", "xrp", "ltc", "doge", "bch"):
         for n in d["nodes"]:
             if not n.get("kind") and not str(n["id"]).startswith("tx:"): bridges.decorate_vault(n, c)   # live THORChain/Maya vaults = bridge
+    if c in ("eth", "bsc"):
+        import xswap
+        for n in d["nodes"]:
+            if not str(n["id"]).startswith("tx:"): xswap.decorate(n, c)   # labelled instant swappers (public label sets, cited)
     for n in d["nodes"]: n["flag"] = n.get("kind") in labels.EXPO
     if d.get("cp"): _cp_sugg(c, d["cp"].get("counterparties") or [])
     if d.get("balance") is not None: d["balance_usd"] = chains.usd_of(d["balance"], d.get("unit"))
@@ -211,6 +215,40 @@ async def bridge(q: str | None = None, tx: str | None = None, chain: str | None 
         m["graph"] = {"nodes": nodes, "edges": edges}
     d["caveat"] = "Deterministic = linked by the bridge's own indexer. Heuristic = lead only (amount/time/address coincidence), not evidence."
     return d
+@app.get("/api/xswap")
+async def xswap_api(tx: str, chain: str | None = None, anchor: str | None = None, heuristic: bool = True):
+    """Cross-chain swap tracing for one input tx: deterministic protocol matches (THORChain/Maya via Midgard, Chainflip swap API)
+    plus heuristic instant-swapper leads (labelled swapper payouts matched by timing + USD value). Heuristic = lead only."""
+    import xswap
+    q = chains.evmcfg.bare(tx.strip()).removeprefix("tx:")
+    c, kind = chains.detect(q, chain)
+    if kind != "tx": raise HTTPException(400, "Give the transaction hash of the payment into the swap (BTC/ETH/SOL/TRON/EVM)")
+    out = {"query": q, "chain": c, "deterministic": [], "tried": [], "heuristic": None,
+           "caveat": "Deterministic = linked by the protocol's own indexer (THORChain/Maya memo, Chainflip swap id). Instant-swapper matches are heuristic leads only, not evidence."}
+    async def det():
+        if c not in ("eth", "btc", "sol") and c not in chains.EVM_NEW: return
+        try: d = await asyncio.wait_for(bridges.match_tx(q, c if c in chains.EVM_NEW else None, heuristic=False), 15)
+        except Exception as e: out["tried"].append({"provider": "swap indexers", "ok": False, "error": f"{type(e).__name__}: {e}"[:120]}); return
+        out["tried"] += d.get("tried", [])
+        for m in d.get("matches", []):
+            m = dict(m); m["swap"] = (m["src"].get("unit") or "") != (m["dst"].get("unit") or "") or m["provider"] in ("midgard", "chainflip")
+            nodes, edges = bridges.fragment(m, anchor, "dst" if m.get("side", "src") == "src" else "src")
+            for e in edges: e.update(swap=m["swap"], method="deterministic")
+            for n in nodes: n["flag"] = n.get("kind") in labels.EXPO
+            m["graph"] = {"nodes": nodes, "edges": edges}; out["deterministic"].append(m)
+    async def heu():
+        if not heuristic: return
+        try: r = await asyncio.wait_for(xswap.leads(q, lookup, c, budget=26), 36)
+        except asyncio.TimeoutError: out["heuristic"] = {"candidates": [], "notes": ["instant-swapper search timed out; retry (results are cached)"], "lead": xswap.LEAD}; return
+        except Exception as e: out["heuristic"] = {"candidates": [], "notes": [f"instant-swapper search failed: {type(e).__name__}: {str(e)[:120]}"], "lead": xswap.LEAD}; return
+        for x in r.get("candidates", []):
+            ns, es = xswap.fragment(r, x)
+            for n in ns: n["flag"] = n.get("kind") in labels.EXPO
+            x["graph"] = {"nodes": ns, "edges": es}
+        out["heuristic"] = r
+    await asyncio.gather(det(), heu())
+    if out["deterministic"] and out["heuristic"]: out["heuristic"]["notes"] = ["A deterministic protocol match exists: prefer it over the heuristic leads."] + out["heuristic"].get("notes", [])
+    return out
 WATCH_MAX = 8                        # addresses per /api/watch/check call (client batches + staggers the rest)
 _WATCH_SEM = asyncio.Semaphore(2)    # concurrent watch batches across all clients
 @app.post("/api/watch/check")

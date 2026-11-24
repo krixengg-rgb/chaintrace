@@ -7,6 +7,7 @@
 Legal references below were taken from public sources (legislation.gov.uk, GOV.UK, ICO, Report Fraud) in November 2026; the officer must take their own legal advice."""
 import csv, hashlib, io, json, re, time, zipfile
 from collections import defaultdict
+from datetime import datetime, timezone
 import labels, deposits, screen
 import report as R
 
@@ -364,6 +365,21 @@ async def build_pack(p):
     if info.get("prodorder") and info["prodorder"].get("groups"):
         import prodorder
         files.append(("production_order_draft.csv", prodorder.to_csv(info["prodorder"]).encode("utf-8")))
+    try: xr = R.bridge_rows(R.analyse(p))
+    except Exception as ex: xr = []; info.setdefault("notes", []).append(f"cross_chain_hops.csv unavailable ({type(ex).__name__})")
+    if xr:
+        buf = io.StringIO(); w = csv.writer(buf)
+        w.writerow(["hop", "type", "method", "confidence", "provider", "status", "src_chain", "src_tx", "src_address", "sent", "sent_unit", "src_time_utc",
+                    "dst_chain", "dst_tx", "dst_address", "received", "received_unit", "dst_time_utc", "usd_indicative", "basis", "reference"])
+        for k, b in enumerate(xr, 1):
+            s_, d_ = b.get("src") or {}, b.get("dst") or {}
+            tu = lambda t: datetime.fromtimestamp(float(t), timezone.utc).strftime("%Y-%m-%d %H:%M:%S") if isinstance(t, (int, float)) and t else (t or "")
+            w.writerow([k, "swap" if (s_.get("unit") or "") != (d_.get("unit") or "") or "swap" in str(b.get("bridge") or "").lower() else "bridge",
+                        "heuristic (lead only)" if b.get("heur") else "deterministic", b.get("confidence"), b.get("provider"), b.get("status"),
+                        s_.get("chain"), s_.get("tx"), s_.get("address"), s_.get("amount"), s_.get("unit"), tu(s_.get("time")),
+                        d_.get("chain"), d_.get("tx"), d_.get("address"), d_.get("amount"), d_.get("unit"), tu(d_.get("time")), b.get("usd"),
+                        str(b.get("evidence") or b.get("note") or "")[:500], b.get("ref") if isinstance(b.get("ref"), str) else ""])
+        files.append(("cross_chain_hops.csv", buf.getvalue().encode("utf-8")))
     import auditlog
     if any(isinstance(e, dict) for e in case.get("journal") or []): files.append(("case_notes.csv", auditlog.notes_csv(case.get("journal"))))
     if any(isinstance(e, dict) for e in case.get("audit") or []):

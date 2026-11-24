@@ -1,0 +1,126 @@
+{
+"_about": "Instant-swap service addresses from documented public label sources (one source + URL per row). Heuristic swap leads only.",
+"generated": 1795532381,
+"entries": [
+{
+"c": "eth",
+"a": "0x077d360f11d220e4d5d831430c81c26c9be7c4a4",
+"service": "ChangeNOW",
+"name": "changenow",
+"src": "dawsbot/eth-labels (Etherscan public labels)",
+"url": "https://github.com/dawsbot/eth-labels"
+},
+{
+"c": "eth",
+"a": "0x3421230289980b8ea81781b170ef7d475673102b",
+"service": "ChangeNOW",
+"name": "ChangeNOW 8",
+"src": "dawsbot/eth-labels (Etherscan public labels)",
+"url": "https://github.com/dawsbot/eth-labels"
+},
+{
+"c": "eth",
+"a": "0x3a0d24d59af3a3444dc6ef12cdb0c6e38c985288",
+"service": "ChangeNOW",
+"name": "ChangeNOW 6",
+"src": "dawsbot/eth-labels (Etherscan public labels)",
+"url": "https://github.com/dawsbot/eth-labels"
+},
+{
+"c": "eth",
+"a": "0x48c04ed5691981c42154c6167398f95e8f38a7ff",
+"service": "ChangeNOW",
+"name": "ChangeNOW 2",
+"src": "brianleect/etherscan-labels (Etherscan public labels)",
+"url": "https://github.com/brianleect/etherscan-labels"
+},
+{
+"c": "eth",
+"a": "0x6ba7fe01eec4c6a4308c8e2b35970e0488ce9a86",
+"service": "ChangeNOW",
+"name": "ChangeNOW: HTX Deposit",
+"src": "dawsbot/eth-labels (Etherscan public labels)",
+"url": "https://github.com/dawsbot/eth-labels"
+},
+{
+"c": "eth",
+"a": "0x8f54972f4ca40bd3ffc8b085f6ece1739c40c65f",
+"service": "ChangeNOW",
+"name": "changenow",
+"src": "dawsbot/eth-labels (Etherscan public labels)",
+"url": "https://github.com/dawsbot/eth-labels"
+},
+{
+"c": "eth",
+"a": "0x975d9bd9928f398c7e01f6ba236816fa558cd94b",
+"service": "ChangeNOW",
+"name": "ChangeNOW: Hot Wallet 1",
+"src": "dawsbot/eth-labels (Etherscan public labels)",
+"url": "https://github.com/dawsbot/eth-labels"
+},
+{
+"c": "eth",
+"a": "0x9bc2f223026c252c8ef5f7f33f00f4bee21434b8",
+"service": "ChangeNOW",
+"name": "ChangeNOW 9",
+"src": "dawsbot/eth-labels (Etherscan public labels)",
+"url": "https://github.com/dawsbot/eth-labels"
+},
+{
+"c": "eth",
+"a": "0xa12e1462d0ced572f396f58b6e2d03894cd7c8a4",
+"service": "ChangeNOW",
+"name": "ChangeNOW 10",
+"src": "dawsbot/eth-labels (Etherscan public labels)",
+"url": "https://github.com/dawsbot/eth-labels"
+},
+{
+"c": "eth",
+"a": "0xa96be652a08d9905f15b7fbe2255708709becd09",
+"service": "ChangeNOW",
+"name": "ChangeNOW: Hot Wallet 2",
+"src": "dawsbot/eth-labels (Etherscan public labels)",
+"url": "https://github.com/dawsbot/eth-labels"
+},
+{
+"c": "eth",
+"a": "0xbac051bbf79c5321c0f825ea9bca71f992144029",
+"service": "ChangeNOW",
+"name": "ChangeNOW 11",
+"src": "dawsbot/eth-labels (Etherscan public labels)",
+"url": "https://github.com/dawsbot/eth-labels"
+},
+{
+"c": "eth",
+"a": "0x96fc4553a00c117c5b0bed950dd625d1c16dc894",
+"service": "Changelly",
+"name": "Changelly",
+"src": "GraphSense public TagPacks",
+"url": "https://etherscan.io/labelcloud"
+},
+{
+"c": "bsc",
+"a": "0x4727250679294802377dd6ca6541b8e459077c95",
+"service": "FixedFloat",
+"name": "FixedFloat: Hot Wallet",
+"src": "dawsbot/eth-labels (Etherscan public labels)",
+"url": "https://github.com/dawsbot/eth-labels"
+},
+{
+"c": "eth",
+"a": "0x4e5b2e1dc63f6b91cb6cd759936495434c7e972f",
+"service": "FixedFloat",
+"name": "FixedFloat",
+"src": "GraphSense public TagPacks",
+"url": "https://etherscan.io/labelcloud"
+},
+{
+"c": "eth",
+"a": "0xf1da173228fcf015f43f3ea15abbb51f0d8f1123",
+"service": "eXch",
+"name": "eXch: hot wallet (no-KYC instant swap; service closed April 2025)",
+"src": "Etherscan public name tag 'eXch: Hot wallet'; eXch's own Bitcointalk statement quoted by Cointelegraph (23 Feb 2025)",
+"url": "https://cointelegraph.com/news/crypto-exchangexch-denies-laundering-bybit-hacked-funds"
+}
+]
+}

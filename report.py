@@ -601,7 +601,7 @@ async def build(p):
     if hr: findings.append("High-risk counterparties in graph: " + "; ".join(f"{k}: {n}" for k, n in hr)[:400] + ".")
     SW = [n["swap"] for i, n in nodes.items() if n.get("kind") == "swap" and isinstance(n.get("swap"), dict)]
     if SW: findings.append(f"{len(SW)} Ethereum DEX swap(s) shown as readable steps (Section 3.1), e.g. " + "; ".join(str(x.get("text") or "")[:120] for x in SW[:3]) + ".")
-    if B: findings.append(f"{len(B)} cross-chain bridge hop(s) identified; {len(B) - len(heur)} linked deterministically by the bridge’s own indexer" + (f", {len(heur)} heuristic (lead only)" if heur else "") + " (Section 4).")
+    if B: findings.append(f"{len(B)} cross-chain bridge/swap hop(s) identified; {len(B) - len(heur)} linked deterministically by the bridge’s own indexer" + (f", {len(heur)} heuristic (lead only)" if heur else "") + " (Section 4).")
     if sugg: findings.append(f"{len(sugg)} address(es) carry ChainTrace-inferred (AI/model-suggested) exchange-deposit labels. These are intelligence leads only (Section 5).")
     findings += [f"ChainTrace risk note: {x}" for x in reasons[:6]]
     if findings: pdf.h2("Key findings (automatically generated, verify before reliance)"); pdf.bullets(findings, size=8.3)
@@ -705,11 +705,12 @@ async def build(p):
                 r.cell(f"{x.get('venue')}\ncalled: {(x.get('router') or {}).get('name') or str((x.get('router') or {}).get('address') or '')[:12]}\n{hops}"[:300])
                 r.cell("Decoded (event logs)" if x.get("decoded") else "Partly inferred: " + "; ".join(x.get("inferred") or [x.get("method") or ""])[:160], style=DETF if x.get("decoded") else LEADF)
     # ---------- 4 bridges ----------
-    pdf.h1("4. Cross-chain bridge hops")
+    pdf.h1("4. Cross-chain bridge and swap hops")
     if B:
         pdf.para("A deterministic match means the bridge's own indexer (message, order or VAA identifier) links the source transaction to the destination transaction, and ChainTrace "
-                 "checked that the record contains the queried hash. A heuristic match is inferred only from the same asset, a similar amount (within 5% fee tolerance), "
-                 "the same recipient address and a time window, and is a lead, not evidence.", size=8, color=GREY)
+                 "checked that the record contains the queried hash (THORChain/Maya: inbound tx + memo → outbound tx in Midgard; Chainflip: deposit tx → swap id → egress tx). "
+                 "A heuristic match is inferred only from amounts and timing (bridges: same asset and recipient, within 5%; instant swappers such as ChangeNOW or FixedFloat: "
+                 "a payout from a publicly labelled swapper wallet within 3 h at 85–102% of the input's USD value) and is a lead, not evidence.", size=8, color=GREY)
         for k, b in enumerate(B, 1):
             s_, d_ = b.get("src") or {}, b.get("dst") or {}
             pdf.h2(f"4.{k}  {b.get('bridge') or 'Bridge'}: {chain_name(s_.get('chain'))} → {chain_name(d_.get('chain'))}")
@@ -841,6 +842,7 @@ async def build(p):
         "Aggregation: repeated transfers between the same pair of addresses in the same asset are merged into one edge (count, first/last time). The trail table gives the latest hash, and the full set can be listed from the explorer.",
         "AutoTrace follows the largest outflows hop by hop (top-K per address, minimum USD value) until it reaches labelled endpoints, dead ends or its limits. It filters noise (dust, spam tokens, approvals). Endpoint “flow in” is an upper bound, because tracing does not apply FIFO/LIFO or proportional taint allocation.",
         "Bridge hops: deterministic matches come from the bridge's own indexer. Heuristic matches (ETH mainnet ERC-20 → Arbitrum, Optimism, Base or Polygon only) use asset, amount within 5%, a 3-hour window and the same recipient. Confidence is capped at 60%.",
+        "Cross-chain swaps: THORChain/Maya (Midgard) and Chainflip (chainflip-swap.chainflip.io) link input and output deterministically. Instant custodial swappers (ChangeNOW, FixedFloat, Changelly, eXch) pay out from pooled hot wallets, so ChainTrace only lists heuristic leads: payouts from swapper wallets labelled in public datasets (source cited per wallet) within 3 hours whose USD value (hourly price) is 85–102% of the input. Confidence is capped at 60% and falls with the number of candidates; confirm with the service.",
         "Inferred exchange-deposit labels: a transparent behavioural model (several unrelated senders, sweeps of near-full balances to one exchange hot wallet, gas top-ups from the exchange). It outputs a confidence score and never raises risk above exchange level. These are intelligence leads only.",
         "The risk score is ChainTrace's exposure heuristic based on the categories of nearby counterparties. It is not a legal or regulatory finding.",
     ], size=7.8)

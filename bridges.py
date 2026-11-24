@@ -311,6 +311,37 @@ async def midgard_addr(a):
         out += [_mid(x, name) for x in (d or {}).get("actions") or [] if x.get("type") in ("swap", "refund")]
     return out
 
+# ---------------- Chainflip (public swap backend used by swap.chainflip.io and the Chainflip SDK) ----------------
+CF_API = "https://chainflip-swap.chainflip.io"
+CF_CHAIN = {"Ethereum": "eth", "Bitcoin": "btc", "Solana": "sol", "Arbitrum": "arb", "Polkadot": "dot", "Assethub": "assethub", "Tron": "tron"}
+CF_DEC = {"BTC": 8, "ETH": 18, "FLIP": 18, "USDC": 6, "USDT": 6, "SOL": 9, "DOT": 10, "TRX": 6, "WBTC": 8}
+def _cf(d):
+    sc = CF_CHAIN.get(d.get("srcChain"), str(d.get("srcChain") or "?").lower()); dc = CF_CHAIN.get(d.get("destChain"), str(d.get("destChain") or "?").lower())
+    sa, da = d.get("srcAsset") or "?", d.get("destAsset") or "?"
+    dep = d.get("deposit") or {}; eg = d.get("swapEgress") or {}; rf = d.get("refundEgress") or {}; ch_ = d.get("depositChannel") or {}
+    amt = lambda x, a: int(x) / 10 ** CF_DEC.get(a, 18) if x not in (None, "") else None
+    st = d.get("state") or "?"; done = st == "COMPLETED" and eg.get("txRef")
+    refund = st == "FAILED" and rf.get("txRef")
+    t_in = (dep.get("witnessedAt") or 0) / 1000 or None; t_out = (eg.get("witnessedAt") or rf.get("witnessedAt") or 0) / 1000 or None
+    src = side(sc, dep.get("txRef"), ch_.get("depositAddress") or (d.get("fillOrKillParams") or {}).get("refundAddress"), amt(dep.get("amount"), sa), sa, t_in,
+               amt(dep.get("amount"), sa) if sa in ("USDC", "USDT") else None)
+    if refund: dst = side(sc, rf.get("txRef"), (d.get("fillOrKillParams") or {}).get("refundAddress"), amt(rf.get("amount"), sa), sa, t_out, status=st)
+    else: dst = side(dc, eg.get("txRef"), d.get("destAddress"), amt(eg.get("amount"), da), da, t_out, status=st)
+    notes = []
+    if ch_.get("depositAddress"): notes.append(f"Deposit channel {ch_.get('id')}: the source address shown is the one-off Chainflip deposit address, not the payer")
+    if not done and not refund: notes.append(f"Swap state {st}: the outbound transfer has not been confirmed yet")
+    if refund: notes.append("Refund: the swap failed and the input was returned to the refund address")
+    return M("Chainflip swap", "chainflip", "deterministic", 0.99 if (done or refund) else 0.8, "refunded" if refund else ("completed" if done else st.lower()), src, dst,
+             f"Chainflip swap #{d.get('swapId')}: deposit tx witnessed by the Chainflip State Chain → swap executed → egress tx {('(refund) ' if refund else '')}broadcast by the validator network (chainflip-swap.chainflip.io /v2/swaps)",
+             src.get("usd"), f"https://scan.chainflip.io/swaps/{d.get('swapId')}", notes)
+async def chainflip_tx(h):
+    if not (_hex_ok(h) or _btc_ok(h) or _sol_ok(h)): return []
+    try: d = await _get(f"{CF_API}/v2/swaps/{h}", ttl=120)
+    except Exception as e:
+        if "404" in str(e): return []
+        raise
+    return [_cf(d)] if isinstance(d, dict) and d.get("swapId") else []
+
 # ---------------- LayerZero / Stargate ----------------
 SG_ASSET = {1: "USDC", 2: "USDT", 13: "ETH", 14: "METIS", 15: "mETH"}
 def _lz_payload(p):
@@ -380,6 +411,7 @@ TX_PROVIDERS = {  # name -> (fn, which hash formats)
  "across": (across_tx, ("eth",)), "thorchain/maya": (midgard_tx, ("eth", "btc")), "layerzero": (layerzero_tx, ("eth",)), "relay": (relay_tx, ("eth", "sol", "btc")),
  "canonical": (lambda h: __import__("canonical").canonical_tx(h), ("eth",)),
  "cctp": (lambda h: __import__("stable").cctp_tx(h), ("eth", "sol")),
+ "chainflip": (chainflip_tx, ("eth", "btc", "sol")),
 }
 ADDR_PROVIDERS = {
  "wormhole": (wormhole_addr, ("eth", "sol")), "debridge": (debridge_addr, ("eth", "sol")), "mayan": (mayan_addr, ("eth", "sol")),
@@ -394,6 +426,8 @@ SUPPORTED = [
  {"bridge": "Mayan (Swift, MCTP, WH)", "chains": "ETH, SOL, L2s", "method": "deterministic", "source": "explorer-api.mayan.finance"},
  {"bridge": "Across", "chains": "ETH, L2s (deposit side lookup)", "method": "deterministic", "source": "app.across.to"},
  {"bridge": "THORChain / Maya", "chains": "BTC, ETH, BSC, AVAX, DOGE, LTC, …", "method": "deterministic (memo swaps)", "source": "Midgard"},
+ {"bridge": "Chainflip (cross-chain swaps)", "chains": "BTC, ETH, ARB, SOL, DOT, …", "method": "deterministic (source tx → swap id → egress tx, forward from the deposit tx only)", "source": "chainflip-swap.chainflip.io"},
+ {"bridge": "Instant swappers (ChangeNOW, FixedFloat, Changelly, eXch)", "chains": "any → ETH/BSC payouts", "method": "heuristic: timing + amount lead only (see Swap leads)", "source": "labelled swapper wallets + Blockscout / public RPC"},
  {"bridge": "LayerZero / Stargate", "chains": "ETH, L2s, BSC", "method": "deterministic (message id)", "source": "scan.layerzero-api.com"},
  {"bridge": "Relay", "chains": "ETH, SOL, BTC, L2s", "method": "deterministic (best effort, v2 API retiring 24 Nov 2026)", "source": "api.relay.link"},
  {"bridge": "Any other bridge, incl. Polygon PoS and Arbitrum token-gateway deposits (ERC-20 USDC/USDT/WETH/WBTC to Arbitrum, Optimism, Base, Polygon)", "chains": "ETH → L2", "method": "heuristic: lead only", "source": "public RPC eth_getLogs"},
@@ -440,7 +474,7 @@ async def match_tx(h, chain=None, heuristic=True):
     ms, tried = await _run(TX_PROVIDERS, h, fmt)
     hn = h.lower().removeprefix("0x")
     ms = [m for m in ms if hn in ((m["src"].get("tx") or "").lower().removeprefix("0x"), (m["dst"].get("tx") or "").lower().removeprefix("0x"))]   # indexer must echo our hash
-    PN = {"canonical (on-chain)": "canonical", "wormholescan": "wormhole", "dln.trade": "debridge", "mayan.finance": "mayan", "across.to": "across", "midgard": "thorchain/maya", "layerzeroscan": "layerzero", "relay.link": "relay", "iris.circle.com": "cctp"}
+    PN = {"canonical (on-chain)": "canonical", "wormholescan": "wormhole", "dln.trade": "debridge", "mayan.finance": "mayan", "across.to": "across", "midgard": "thorchain/maya", "layerzeroscan": "layerzero", "relay.link": "relay", "iris.circle.com": "cctp", "chainflip": "chainflip"}
     for t in tried: t["matches"] = sum(1 for m in ms if PN.get(m["provider"]) == t["provider"])
     for m in ms: m["side"] = "src" if (m["src"].get("tx") or "").lower() == h.lower() else ("dst" if (m["dst"].get("tx") or "").lower() == h.lower() else "src")
     res = {"query": h, "chain": chain or fmt, "kind": "tx", "matches": ms, "tried": tried, "heuristic": [], "heuristic_note": None}
@@ -450,7 +484,9 @@ async def match_tx(h, chain=None, heuristic=True):
         except Exception as e: res["heuristic_note"] = f"heuristic search failed: {type(e).__name__}: {e}"
     done = ms and all(m["status"] in ("completed", "refunded") for m in ms)
     errs = any(not t["ok"] for t in tried)
-    _cput(k, res, 30 * 86400 if done else (600 if not ms and not errs else 90))
+    ttl = 30 * 86400 if done else (600 if not ms and not errs else 90)
+    if always and not res["heuristic"]: ttl = min(ttl, 3600)   # an empty heuristic scan may be an RPC/estimate miss: retry within the hour
+    _cput(k, res, ttl)
     return res
 async def match_address(a, chain):
     a = a.strip(); k = f"addr:{chain}:{a.lower() if chain == 'eth' else a}"; c = _cget(k)
@@ -493,6 +529,7 @@ async def _block_at(c, ts):
     est = int(est - (et - ts) / bt); return max(1, min(head, est)), bt, head
 async def _scan(c, token, to, t0, sym, amount):
     b0, bt, head = await _block_at(c, t0); b1 = min(head, b0 + int(WINDOW / bt) + 1); step = H_STEP[c]; out = []
+    b0 = max(1, b0 - int(600 / bt))   # block-time estimate can land a few blocks late; fast fills arrive seconds after the deposit
     topic = "0x" + "0" * 24 + to.lower()[2:]
     rng = list(range(b0, b1 + 1, step))[:12]
     async def one(f):

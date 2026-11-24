@@ -1,6 +1,6 @@
 """AutoTrace: follow funds hop-by-hop until they reach labelled endpoints (exchange, mixer, bridge,
 sanctioned, scam, ...) or a cap is hit. Runs as a cancellable background job sharing trace.JOBS."""
-import asyncio, time, uuid, chains, trace, deposits, bridges, stable
+import asyncio, sys, time, uuid, chains, trace, deposits, bridges, stable, xswap
 from labels import EXPO, RISK
 ENDPOINT = set(RISK) - {"other", "miner"}
 ENDPOINT_AT = 0.85
@@ -13,7 +13,7 @@ async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, s
     nodes, edges, parent, depth_of = {}, {}, {}, {}
     sems = {k: asyncio.Semaphore(v) for k, v in SEM.items()}; stop = None
     chain_of = {}; ch = lambda a: chain_of.get(a, c)   # per-node chain: bridge hops move the trace onto another chain
-    bseen, J["bridges"] = set(), []
+    bseen, J["bridges"] = set(), []; cf_seen, sw_seen = set(), set()
     try: await asyncio.wait_for(bridges.refresh_vaults(), 6)
     except Exception: pass
     def keep(e, cc=None):   # dust / spam filter
@@ -29,6 +29,7 @@ async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, s
             if cc != c: nodes[other]["chain"] = cc
             if not nodes[other].get("kind") and cc in deposits.NATIVE: deposits.decorate(nodes[other], deposits.lookup_batch(cc, other), ENDPOINT_AT)
             if not nodes[other].get("kind"): bridges.decorate_vault(nodes[other], cc)
+            if cc in ("eth", "bsc"): xswap.decorate(nodes[other], cc)
         edges[(e["source"], e["target"], e.get("unit"))] = e
         if other not in parent: parent[other] = (a, e); depth_of[other] = d; nxt.append(other)
     if kind == "address":
@@ -51,7 +52,45 @@ async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, s
         if a in cache: return cache.pop(a)
         async with sems.get(ch(a), sems["eth"]):
             d_ = await chains.ADDR[ch(a)](a); d_.pop("cp", None); return d_
+    async def probe_cf(hop_):   # Chainflip deposit channels are one-off unlabelled addresses: ask the Chainflip swap API by tx hash
+        cand = [a for a in list(nodes) if not nodes[a].get("kind") and depth_of.get(a) == hop_ and parent.get(a) and parent[a][1].get("tx")
+                and ch(a) in ("btc", "eth", "arb", "sol") and a not in cf_seen][:12]
+        cf_seen.update(cand)
+        async def one(a):
+            try: return a, await asyncio.wait_for(bridges.chainflip_tx(parent[a][1]["tx"]), 6)
+            except Exception: return a, []
+        for a, ms in await asyncio.gather(*[one(a) for a in cand]):
+            for m in ms:
+                sa = (m["src"].get("address") or ""); bare_a = a.split(":", 1)[1] if ":" in a and not a.startswith("tx:") else a
+                if sa and sa.lower() == bare_a.lower():
+                    nodes[a].update(kind="bridge", name="Chainflip: deposit channel", risk=max(nodes[a].get("risk") or 0, 5), tags=sorted(set(nodes[a].get("tags") or []) | {"bridge", "Chainflip"}))
+                    nodes[a]["sources"] = list(nodes[a].get("sources") or []) + [{"source": "chainflip-swap.chainflip.io", "name": "Chainflip deposit channel", "category": "bridge", "confidence": 0.99}]
+    async def swap_leads(hop_):   # instant swapper reached: heuristic payout leads (listed + drawn dotted, never followed)
+        lk = getattr(sys.modules.get("app"), "lookup", None)
+        if not lk: return
+        for a in [a for a in list(nodes) if xswap.service_of(nodes[a]) and (hop_ is None or depth_of.get(a) == hop_) and a not in sw_seen and parent.get(a)][:max(0, 2 - len(sw_seen))]:
+            sw_seen.add(a); p_, e = parent[a]
+            if nodes[a].get("swapper") and p_ and parent.get(p_) and not nodes.get(p_, {}).get("kind"): e = parent[p_][1]   # user payment into the per-order deposit address
+            if not e.get("tx"): continue
+            J["progress"] = f"hop {(hop_ if hop_ is not None else depth_of.get(a, 0)) + 1}/{max_hops}: instant swapper {xswap.service_of(nodes[a])} reached – looking for payout leads"
+            try: r = await asyncio.wait_for(xswap.leads(e["tx"], lk, ch(a), budget=18), 25)
+            except Exception as ex: J["errors"].append(f"swap leads {a[:10]}: {type(ex).__name__}"); continue
+            for x in r.get("candidates", [])[:3]:
+                ns, es = xswap.fragment(r, x); n_ = ns[0]; x_ = es[0]
+                if n_["id"] not in nodes:
+                    if len(nodes) >= max_nodes: J["capped"] = True; break
+                    nodes[n_["id"]] = n_; chain_of[n_["id"]] = x["chain"]; depth_of[n_["id"]] = depth_of.get(a, 0) + 1; parent[n_["id"]] = (x_["source"], x_)
+                if x_["source"] not in nodes: x_["source"] = a
+                edges[(x_["source"], x_["target"], x_.get("unit"))] = x_
+                J["bridges"].append({"via": a, "bridge": x_["bridge"]["bridge"], "method": "heuristic", "confidence": x["confidence"], "provider": "xswap",
+                                     "src": {"chain": r["chain"], "tx": r["query"], "amount": r["input"]["amount"], "unit": r["input"]["unit"]},
+                                     "dst": {"chain": x["chain"], "tx": x["tx"], "amount": x["amount"], "unit": x["unit"], "address": x["to"]}, "node": n_["id"], "note": x["evidence"]})
+            J["nodes"], J["edges"] = list(nodes.values()), list(edges.values())
     async def cross(hop_, nxt):   # follow bridges reached on the previous hop (deterministic matches only)
+        try: await probe_cf(hop_)
+        except Exception as ex: J["errors"].append(f"chainflip probe: {type(ex).__name__}")
+        try: await swap_leads(hop_)
+        except Exception as ex: J["errors"].append(f"swap leads: {type(ex).__name__}")
         todo_b = [a for a in list(nodes) if nodes[a].get("kind") == "bridge" and a not in bseen and a in parent and parent[a] and depth_of.get(a) == hop_]
         for a in todo_b[:max(0, MAX_BRIDGE_HOPS - len(bseen))]:
             bseen.add(a); e = parent[a][1]
@@ -111,6 +150,9 @@ async def run(job, q, direction, max_hops, max_nodes, max_secs, min_usd, topk, s
             if len(nodes) >= max_nodes: stop = f"node cap ({max_nodes}) reached"; break
         frontier = nxt
     if not stop: stop = "all branches reached endpoints or dead ends"
+    if follow_bridges and time.time() - t0 < max_secs + 20:   # swappers recognised only when their node was fetched (inferred deposit addresses)
+        try: await swap_leads(None)
+        except Exception as ex: J["errors"].append(f"swap leads: {type(ex).__name__}")
     # ---- endpoints + paths
     def path_to(nid):
         ns, es, cur = [nid], [], nid
